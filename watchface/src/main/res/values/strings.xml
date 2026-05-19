@@ -1,0 +1,10 @@
+<resources>
+    <string name="watch_face_name">BPM Munkz Pulse</string>
+    <string name="dial_style_label">Dial color</string>
+    <string name="dial_style_all_colors_label">All colors</string>
+    <string name="dial_style_blue_label">Blue</string>
+    <string name="dial_style_green_label">Green</string>
+    <string name="dial_style_orange_label">Orange</string>
+    <string name="dial_style_purple_label">Purple</string>
+    <string name="dial_style_white_label">White</string>
+</resources>

@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WatchFace width="450" height="450">
+    <UserConfigurations>
+        <ListConfiguration
+            id="dial_style"
+            displayName="dial_style_label"
+            screenReaderText="dial_style_label"
+            defaultValue="all_colors">
+            <ListOption
+                id="all_colors"
+                displayName="dial_style_all_colors_label"
+                screenReaderText="dial_style_all_colors_label"
+                icon="dial_all_colors" />
+            <ListOption
+                id="blue"
+                displayName="dial_style_blue_label"
+                screenReaderText="dial_style_blue_label"
+                icon="dial_blue" />
+            <ListOption
+                id="green"
+                displayName="dial_style_green_label"
+                screenReaderText="dial_style_green_label"
+                icon="dial_green" />
+            <ListOption
+                id="orange"
+                displayName="dial_style_orange_label"
+                screenReaderText="dial_style_orange_label"
+                icon="dial_orange" />
+            <ListOption
+                id="purple"
+                displayName="dial_style_purple_label"
+                screenReaderText="dial_style_purple_label"
+                icon="dial_purple" />
+            <ListOption
+                id="white"
+                displayName="dial_style_white_label"
+                screenReaderText="dial_style_white_label"
+                icon="dial_white" />
+        </ListConfiguration>
+    </UserConfigurations>
+
+    <Scene>
+        <ListConfiguration id="dial_style">
+            <ListOption id="all_colors">
+                <PartImage x="0" y="0" width="450" height="450">
+                    <Image resource="dial_all_colors" />
+                </PartImage>
+            </ListOption>
+            <ListOption id="blue">
+                <PartImage x="0" y="0" width="450" height="450">
+                    <Image resource="dial_blue" />
+                </PartImage>
+            </ListOption>
+            <ListOption id="green">
+                <PartImage x="0" y="0" width="450" height="450">
+                    <Image resource="dial_green" />
+                </PartImage>
+            </ListOption>
+            <ListOption id="orange">
+                <PartImage x="0" y="0" width="450" height="450">
+                    <Image resource="dial_orange" />
+                </PartImage>
+            </ListOption>
+            <ListOption id="purple">
+                <PartImage x="0" y="0" width="450" height="450">
+                    <Image resource="dial_purple" />
+                </PartImage>
+            </ListOption>
+            <ListOption id="white">
+                <PartImage x="0" y="0" width="450" height="450">
+                    <Image resource="dial_white" />
+                </PartImage>
+            </ListOption>
+        </ListConfiguration>
+
+        <AnalogClock x="0" y="0" width="450" height="450">
+            <HourHand
+                resource="hour_hand"
+                x="213"
+                y="75"
+                width="24"
+                height="170"
+                pivotX="0.5"
+                pivotY="0.882" />
+            <MinuteHand
+                resource="minute_hand"
+                x="216"
+                y="29"
+                width="18"
+                height="220"
+                pivotX="0.5"
+                pivotY="0.891" />
+            <SecondHand
+                resource="second_hand"
+                x="221"
+                y="21"
+                width="8"
+                height="230"
+                pivotX="0.5"
+                pivotY="0.887">
+                <Variant mode="AMBIENT" target="alpha" value="0" />
+                <Sweep frequency="15" />
+            </SecondHand>
+        </AnalogClock>
+    </Scene>
+</WatchFace>

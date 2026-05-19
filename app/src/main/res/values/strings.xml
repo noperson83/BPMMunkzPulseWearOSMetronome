@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">BPM Munkz Pulse Free</string>
+    <string name="tile_label">BPM Munkz Pulse</string>
+    <string name="tile_description">Quick launch tile for BPM Munkz Pulse.</string>
+</resources>
