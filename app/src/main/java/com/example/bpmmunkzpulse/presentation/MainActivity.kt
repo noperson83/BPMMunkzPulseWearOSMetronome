@@ -190,22 +190,176 @@ private data class SavedPlaylist(
 
 private data class ClockImageChoice(
     val label: String,
+    val spanishLabel: String = label,
+)
+
+private enum class AppLanguage {
+    English,
+    Spanish,
+}
+
+private data class AppText(
+    val tap: String,
+    val start: String,
+    val stop: String,
+    val startUpper: String,
+    val stopUpper: String,
+    val settings: String,
+    val beat: String,
+    val bigPulse: String,
+    val beep: String,
+    val on: String,
+    val off: String,
+    val theme: String,
+    val mainColor: String,
+    val backgroundColor: String,
+    val clock: String,
+    val clockImage: String,
+    val handColor: String,
+    val bigRing: String,
+    val language: String,
+    val big: String,
+    val edit: String,
+    val editPlaylist: String,
+    val listName: String,
+    val newList: String,
+    val song: String,
+    val songName: String,
+    val addSong: String,
+    val key: String,
+    val note: String,
+    val done: String,
+    val pulsePro: String,
+    val fullAppIncludes: String,
+    val customSettings: String,
+    val savedTempoPlaylists: String,
+    val secondsToBeatsClock: String,
+    val moreBeatSounds: String,
+    val watchFace: String,
+    val buyNow: String,
+    val useFace: String,
+    val decreaseBpmBy5: String,
+    val increaseBpmBy5: String,
 )
 
 private val ClockImageChoices = listOf(
-    ClockImageChoice("Rainb"),
-    ClockImageChoice("Blue"),
-    ClockImageChoice("Green"),
-    ClockImageChoice("Orange"),
-    ClockImageChoice("Purple"),
-    ClockImageChoice("White"),
+    ClockImageChoice("Rainb", "Arco"),
+    ClockImageChoice("Blue", "Azul"),
+    ClockImageChoice("Green", "Verde"),
+    ClockImageChoice("Orange", "Naran"),
+    ClockImageChoice("Purple", "Morad"),
+    ClockImageChoice("White", "Blanc"),
     ClockImageChoice("Munk"),
     ClockImageChoice("Sax"),
     ClockImageChoice("Piano"),
-    ClockImageChoice("Gtr"),
-    ClockImageChoice("Trum"),
+    ClockImageChoice("Gtr", "Guit"),
+    ClockImageChoice("Trum", "Trom"),
     ClockImageChoice("Rock"),
 )
+
+private val AppLanguages = listOf(
+    AppLanguage.English,
+    AppLanguage.Spanish,
+)
+
+private fun ClockImageChoice.labelFor(language: AppLanguage): String {
+    return when (language) {
+        AppLanguage.English -> label
+        AppLanguage.Spanish -> spanishLabel
+    }
+}
+
+private fun appTextFor(language: AppLanguage): AppText {
+    return when (language) {
+        AppLanguage.English -> AppText(
+            tap = "Tap",
+            start = "Start",
+            stop = "Stop",
+            startUpper = "START",
+            stopUpper = "STOP",
+            settings = "Settings",
+            beat = "Beat",
+            bigPulse = "Big pulse",
+            beep = "Beep",
+            on = "On",
+            off = "Off",
+            theme = "Theme",
+            mainColor = "Main color",
+            backgroundColor = "BG color",
+            clock = "Clock",
+            clockImage = "Clock image",
+            handColor = "Clock Hand",
+            bigRing = "Big ring",
+            language = "Language",
+            big = "BIG",
+            edit = "Edit",
+            editPlaylist = "Edit Playlist",
+            listName = "List Name",
+            newList = "New List",
+            song = "Song",
+            songName = "Song Name",
+            addSong = "Add Song",
+            key = "Key",
+            note = "Note",
+            done = "Done",
+            pulsePro = "Pulse Pro",
+            fullAppIncludes = "Full app includes",
+            customSettings = "Custom Settings",
+            savedTempoPlaylists = "Saved Tempo Playlists",
+            secondsToBeatsClock = "Seconds to Beats Clock",
+            moreBeatSounds = "More beat sounds",
+            watchFace = "BPM Munkz watch face",
+            buyNow = "Buy Now",
+            useFace = "Use Face",
+            decreaseBpmBy5 = "Decrease BPM by 5",
+            increaseBpmBy5 = "Increase BPM by 5",
+        )
+
+        AppLanguage.Spanish -> AppText(
+            tap = "Pulsar",
+            start = "Iniciar",
+            stop = "Parar",
+            startUpper = "INICIAR",
+            stopUpper = "PARAR",
+            settings = "Ajustes",
+            beat = "Compas",
+            bigPulse = "Pulso grande",
+            beep = "Pitido",
+            on = "Si",
+            off = "No",
+            theme = "Tema",
+            mainColor = "Color base",
+            backgroundColor = "Color fondo",
+            clock = "Reloj",
+            clockImage = "Imagen reloj",
+            handColor = "Mano de reloj",
+            bigRing = "Aro grande",
+            language = "Idioma",
+            big = "GRAN",
+            edit = "Editar",
+            editPlaylist = "Editar lista",
+            listName = "Lista",
+            newList = "Nueva",
+            song = "Cancion",
+            songName = "Cancion",
+            addSong = "Agregar",
+            key = "Tono",
+            note = "Nota",
+            done = "Listo",
+            pulsePro = "Pulse Pro",
+            fullAppIncludes = "App completa",
+            customSettings = "Ajustes propios",
+            savedTempoPlaylists = "Listas guardadas",
+            secondsToBeatsClock = "Reloj beats/seg",
+            moreBeatSounds = "Mas sonidos",
+            watchFace = "Face BPM Munkz",
+            buyNow = "Comprar",
+            useFace = "Usar Face",
+            decreaseBpmBy5 = "Bajar BPM por 5",
+            increaseBpmBy5 = "Subir BPM por 5",
+        )
+    }
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -266,6 +420,7 @@ fun BeatPulseScreen() {
     var clockColorArgb by rememberSaveable { mutableIntStateOf(DEFAULT_CLOCK_COLOR) }
     val clockImageIndexState = rememberSaveable { mutableIntStateOf(0) }
     var bigPulseRingColorArgb by rememberSaveable { mutableIntStateOf(DEFAULT_BIG_PULSE_RING_COLOR) }
+    val appLanguageIndexState = rememberSaveable { mutableIntStateOf(0) }
     var pulseProPurchased by rememberSaveable { mutableStateOf(false) }
     var playlists by remember(context, isPreview) {
         mutableStateOf(
@@ -286,6 +441,8 @@ fun BeatPulseScreen() {
     val songIndex = selectedSongIndexState.intValue.coerceIn(0, currentPlaylist.songs.lastIndex)
     val currentSong = currentPlaylist.songs[songIndex]
     val selectedClockImageIndex = clockImageIndexState.intValue.coerceIn(0, ClockImageChoices.lastIndex)
+    val appLanguage = AppLanguages[appLanguageIndexState.intValue.coerceIn(0, AppLanguages.lastIndex)]
+    val appText = appTextFor(appLanguage)
     val clockImageResId = if (isPreview) {
         R.drawable.clock_dial_all_colors
     } else {
@@ -463,6 +620,7 @@ fun BeatPulseScreen() {
             ) { page ->
                 when (page) {
                     0 -> TapTempoPage(
+                    appText = appText,
                     bpm = bpm,
                     beatFlash = beatFlash,
                     isAccentFlash = flashingBeat == accentBeat,
@@ -488,6 +646,7 @@ fun BeatPulseScreen() {
                 )
 
                     1 -> SettingsPage(
+                    appText = appText,
                     beatsPerMeasure = beatsPerMeasure,
                     accentBeat = accentBeat,
                     beepEnabled = beepEnabled,
@@ -496,6 +655,7 @@ fun BeatPulseScreen() {
                     clockColorArgb = clockColorArgb,
                     clockImageIndex = selectedClockImageIndex,
                     ringColorArgb = bigPulseRingColorArgb,
+                    appLanguage = appLanguage,
                     onBeatChoice = { beatChoice ->
                         beatsPerMeasure = beatChoice
                         accentBeat = accentBeat.coerceAtMost(beatChoice)
@@ -523,10 +683,14 @@ fun BeatPulseScreen() {
                         clockImageIndexState.intValue = choiceIndex.coerceIn(0, ClockImageChoices.lastIndex)
                     },
                     onRingColorChoice = { bigPulseRingColorArgb = it },
+                    onLanguageChoice = { language ->
+                        appLanguageIndexState.intValue = AppLanguages.indexOf(language).coerceAtLeast(0)
+                    },
                 )
 
                     2 -> if (playlistEditorOpen) {
                     PlaylistEditorPage(
+                        appText = appText,
                         playlists = playlists,
                         playlistIndex = playlistIndex,
                         songIndex = songIndex,
@@ -610,6 +774,7 @@ fun BeatPulseScreen() {
                     )
                 } else {
                     PlaylistClockPage(
+                        appText = appText,
                         playlist = currentPlaylist,
                         songIndex = songIndex,
                         isRunning = isRunning,
@@ -626,6 +791,7 @@ fun BeatPulseScreen() {
                 }
 
                     3 -> UpgradePage(
+                    appText = appText,
                     isPurchased = pulseProPurchased,
                     onBuyNow = {
                         pulseProPurchased = true
@@ -658,6 +824,7 @@ fun BeatPulseScreen() {
 
 @Composable
 private fun TapTempoPage(
+    appText: AppText,
     bpm: Int,
     beatFlash: Boolean,
     isAccentFlash: Boolean,
@@ -686,7 +853,7 @@ private fun TapTempoPage(
                 text = "-",
                 onClick = onDecrease,
                 onLongClick = onDecreaseLarge,
-                onLongClickLabel = "Decrease BPM by 5",
+                onLongClickLabel = appText.decreaseBpmBy5,
             )
 
             Button(
@@ -695,7 +862,7 @@ private fun TapTempoPage(
                 contentPadding = PaddingValues(0.dp),
             ) {
                 CenteredButtonLabel(
-                    text = "Tap",
+                    text = appText.tap,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                 )
@@ -705,13 +872,14 @@ private fun TapTempoPage(
                 text = "+",
                 onClick = onIncrease,
                 onLongClick = onIncreaseLarge,
-                onLongClickLabel = "Increase BPM by 5",
+                onLongClickLabel = appText.increaseBpmBy5,
             )
         }
 
         Spacer(modifier = Modifier.height(6.dp))
 
         StartStopButton(
+            appText = appText,
             isRunning = isRunning,
             onClick = onToggleRunning,
         )
@@ -742,6 +910,7 @@ private fun TempoAdjustButton(
 
 @Composable
 private fun PlaylistClockPage(
+    appText: AppText,
     playlist: SavedPlaylist,
     songIndex: Int,
     isRunning: Boolean,
@@ -848,7 +1017,7 @@ private fun PlaylistClockPage(
         )
 
         GlassCommandButton(
-            text = "Edit",
+            text = appText.edit,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = 18.dp, bottom = 46.dp)
@@ -859,7 +1028,7 @@ private fun PlaylistClockPage(
         )
 
         GlassCommandButton(
-            text = if (isRunning) "STOP" else "START",
+            text = if (isRunning) appText.stopUpper else appText.startUpper,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 12.dp)
@@ -964,6 +1133,7 @@ private fun BeatClockDial(
 
 @Composable
 private fun PlaylistEditorPage(
+    appText: AppText,
     playlists: List<SavedPlaylist>,
     playlistIndex: Int,
     songIndex: Int,
@@ -996,7 +1166,7 @@ private fun PlaylistEditorPage(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                text = "Edit Playlist",
+                text = appText.editPlaylist,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -1012,25 +1182,25 @@ private fun PlaylistEditorPage(
             )
 
             TinyActionRow(
-                firstText = "List Name",
+                firstText = appText.listName,
                 firstClick = { onPlaylistNameChange(1) },
-                secondText = "New List",
+                secondText = appText.newList,
                 secondClick = onAddPlaylist,
             )
 
             Spacer(modifier = Modifier.height(7.dp))
 
             ChoiceRow(
-                label = "Song ${songIndex + 1}/${playlist.songs.size}",
+                label = "${appText.song} ${songIndex + 1}/${playlist.songs.size}",
                 value = song.name,
                 onPrevious = onPreviousSong,
                 onNext = onNextSong,
             )
 
             TinyActionRow(
-                firstText = "Song Name",
+                firstText = appText.songName,
                 firstClick = { onSongNameChange(1) },
-                secondText = "Add Song",
+                secondText = appText.addSong,
                 secondClick = onAddSong,
             )
 
@@ -1044,14 +1214,14 @@ private fun PlaylistEditorPage(
             )
 
             EditValueRow(
-                label = "Key",
+                label = appText.key,
                 value = song.musicalKey,
                 onDecrease = { onSongKeyChange(-1) },
                 onIncrease = { onSongKeyChange(1) },
             )
 
             EditValueRow(
-                label = "Note",
+                label = appText.note,
                 value = song.note,
                 onDecrease = { onSongNoteChange(-1) },
                 onIncrease = { onSongNoteChange(1) },
@@ -1060,7 +1230,7 @@ private fun PlaylistEditorPage(
             Spacer(modifier = Modifier.height(7.dp))
 
             SmallCommandButton(
-                text = "Done",
+                text = appText.done,
                 modifier = Modifier
                     .width(74.dp)
                     .height(30.dp),
@@ -1200,13 +1370,14 @@ private fun EditValueRow(
 
 @Composable
 private fun UpgradePage(
+    appText: AppText,
     isPurchased: Boolean,
     onBuyNow: () -> Unit,
     onUseWatchFace: () -> Unit,
 ) {
     BeatPulsePage {
         Text(
-            text = "Pulse Pro",
+            text = appText.pulsePro,
             fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
@@ -1215,18 +1386,18 @@ private fun UpgradePage(
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "Full app includes",
+            text = appText.fullAppIncludes,
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onBackground,
         )
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        UpgradeDetail("Custom Settings")
-        UpgradeDetail("Saved Tempo Playlists")
-        UpgradeDetail("Seconds to Beats Clock")
-        UpgradeDetail("More beat sounds")
-        UpgradeDetail("BPM Munkz watch face")
+        UpgradeDetail(appText.customSettings)
+        UpgradeDetail(appText.savedTempoPlaylists)
+        UpgradeDetail(appText.secondsToBeatsClock)
+        UpgradeDetail(appText.moreBeatSounds)
+        UpgradeDetail(appText.watchFace)
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -1238,7 +1409,7 @@ private fun UpgradePage(
             contentPadding = PaddingValues(0.dp),
         ) {
             CenteredButtonLabel(
-                text = if (isPurchased) "Use Face" else "Buy Now",
+                text = if (isPurchased) appText.useFace else appText.buyNow,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
             )
@@ -1301,6 +1472,7 @@ private fun ColorSwatchButton(
 @Composable
 private fun ClockImagePicker(
     selectedIndex: Int,
+    appLanguage: AppLanguage,
     onClockImageChoice: (Int) -> Unit,
 ) {
     Column(
@@ -1315,7 +1487,7 @@ private fun ClockImagePicker(
                 choices.forEachIndexed { columnIndex, choice ->
                     val choiceIndex = rowIndex * 4 + columnIndex
                     ClockImageChoiceButton(
-                        text = choice.label,
+                        text = choice.labelFor(appLanguage),
                         selected = selectedIndex == choiceIndex,
                         onClick = { onClockImageChoice(choiceIndex) },
                     )
@@ -1374,6 +1546,28 @@ private fun ClockImageChoiceButton(
 }
 
 @Composable
+private fun LanguagePicker(
+    selectedLanguage: AppLanguage,
+    onLanguageChoice: (AppLanguage) -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppLanguages.forEach { language ->
+            ClockImageChoiceButton(
+                text = when (language) {
+                    AppLanguage.English -> "EN"
+                    AppLanguage.Spanish -> "ES"
+                },
+                selected = selectedLanguage == language,
+                onClick = { onLanguageChoice(language) },
+            )
+        }
+    }
+}
+
+@Composable
 private fun UpgradeDetail(
     text: String,
 ) {
@@ -1386,6 +1580,7 @@ private fun UpgradeDetail(
 
 @Composable
 private fun SettingsPage(
+    appText: AppText,
     beatsPerMeasure: Int,
     accentBeat: Int,
     beepEnabled: Boolean,
@@ -1394,6 +1589,7 @@ private fun SettingsPage(
     clockColorArgb: Int,
     clockImageIndex: Int,
     ringColorArgb: Int,
+    appLanguage: AppLanguage,
     onBeatChoice: (Int) -> Unit,
     onAccentBeatChoice: (Int) -> Unit,
     onBeepToggle: () -> Unit,
@@ -1402,6 +1598,7 @@ private fun SettingsPage(
     onClockColorChoice: (Int) -> Unit,
     onClockImageChoice: (Int) -> Unit,
     onRingColorChoice: (Int) -> Unit,
+    onLanguageChoice: (AppLanguage) -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -1416,7 +1613,7 @@ private fun SettingsPage(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                text = "Settings",
+                text = appText.settings,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -1425,7 +1622,7 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(5.dp))
 
             Text(
-                text = "Beat",
+                text = appText.beat,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -1451,7 +1648,7 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Big pulse",
+                text = appText.bigPulse,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -1466,6 +1663,7 @@ private fun SettingsPage(
                     AccentBeatButton(
                         beat = beatChoice,
                         selected = accentBeat == beatChoice,
+                        bigLabel = appText.big,
                         onClick = { onAccentBeatChoice(beatChoice) },
                     )
                 }
@@ -1478,13 +1676,13 @@ private fun SettingsPage(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Beep",
+                    text = appText.beep,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
 
                 SettingButton(
-                    text = if (beepEnabled) "On" else "Off",
+                    text = if (beepEnabled) appText.on else appText.off,
                     selected = beepEnabled,
                     modifier = Modifier
                         .width(50.dp)
@@ -1496,7 +1694,7 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Theme",
+                text = appText.theme,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -1505,7 +1703,7 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(5.dp))
 
             Text(
-                text = "Main color",
+                text = appText.mainColor,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -1521,7 +1719,7 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "BG color",
+                text = appText.backgroundColor,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -1534,10 +1732,25 @@ private fun SettingsPage(
                 colorOptions = ThemeBackgroundColorOptions,
             )
 
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = appText.bigRing,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            ColorPickerRow(
+                selectedColorArgb = ringColorArgb,
+                onColorChoice = onRingColorChoice,
+            )
+
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Clock",
+                text = appText.clock,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -1546,7 +1759,7 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(5.dp))
 
             Text(
-                text = "Clock image",
+                text = appText.clockImage,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -1555,13 +1768,14 @@ private fun SettingsPage(
 
             ClockImagePicker(
                 selectedIndex = clockImageIndex,
+                appLanguage = appLanguage,
                 onClockImageChoice = onClockImageChoice,
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Hand color",
+                text = appText.handColor,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -1576,16 +1790,16 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Big ring",
+                text = appText.language,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onBackground,
             )
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            ColorPickerRow(
-                selectedColorArgb = ringColorArgb,
-                onColorChoice = onRingColorChoice,
+            LanguagePicker(
+                selectedLanguage = appLanguage,
+                onLanguageChoice = onLanguageChoice,
             )
         }
     }
@@ -1595,6 +1809,7 @@ private fun SettingsPage(
 private fun AccentBeatButton(
     beat: Int,
     selected: Boolean,
+    bigLabel: String,
     onClick: () -> Unit,
 ) {
     Button(
@@ -1615,7 +1830,7 @@ private fun AccentBeatButton(
 
             if (selected) {
                 Text(
-                    text = "BIG",
+                    text = bigLabel,
                     fontSize = 7.sp,
                     fontWeight = FontWeight.Bold,
                 )
@@ -1815,6 +2030,7 @@ private fun BeatTempoReadout(
 
 @Composable
 private fun StartStopButton(
+    appText: AppText,
     isRunning: Boolean,
     onClick: () -> Unit,
 ) {
@@ -1826,7 +2042,7 @@ private fun StartStopButton(
         contentPadding = PaddingValues(0.dp),
     ) {
         CenteredButtonLabel(
-            text = if (isRunning) "Stop" else "Start",
+            text = if (isRunning) appText.stop else appText.start,
             fontSize = 12.sp,
         )
     }
@@ -2238,6 +2454,7 @@ fun SettingsPreview() {
     BPMMunkzPulseTheme {
         AppScaffold {
             SettingsPage(
+                appText = appTextFor(AppLanguage.English),
                 beatsPerMeasure = 4,
                 accentBeat = 1,
                 beepEnabled = false,
@@ -2246,6 +2463,7 @@ fun SettingsPreview() {
                 clockColorArgb = DEFAULT_CLOCK_COLOR,
                 clockImageIndex = 0,
                 ringColorArgb = DEFAULT_BIG_PULSE_RING_COLOR,
+                appLanguage = AppLanguage.English,
                 onBeatChoice = {},
                 onAccentBeatChoice = {},
                 onBeepToggle = {},
@@ -2254,6 +2472,7 @@ fun SettingsPreview() {
                 onClockColorChoice = {},
                 onClockImageChoice = {},
                 onRingColorChoice = {},
+                onLanguageChoice = {},
             )
         }
     }
