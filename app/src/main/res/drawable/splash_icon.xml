@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item
-        android:width="64dp"
-        android:height="64dp"
+        android:width="96dp"
+        android:height="96dp"
         android:drawable="@drawable/bpm_munkz_app_logo"
         android:gravity="center" />
 </layer-list>

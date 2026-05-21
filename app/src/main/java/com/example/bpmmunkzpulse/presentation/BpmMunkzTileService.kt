@@ -2,58 +2,135 @@ package com.example.bpmmunkzpulse.presentation
 
 import android.content.ComponentName
 import androidx.wear.protolayout.ActionBuilders.launchAction
+import androidx.wear.protolayout.ColorBuilders.argb
+import androidx.wear.protolayout.DimensionBuilders.dp
+import androidx.wear.protolayout.DimensionBuilders.expand
+import androidx.wear.protolayout.DimensionBuilders.sp
+import androidx.wear.protolayout.DimensionBuilders.wrap
+import androidx.wear.protolayout.LayoutElementBuilders.Box
+import androidx.wear.protolayout.LayoutElementBuilders.CONTENT_SCALE_MODE_FIT
+import androidx.wear.protolayout.LayoutElementBuilders.Column
+import androidx.wear.protolayout.LayoutElementBuilders.FONT_WEIGHT_MEDIUM
+import androidx.wear.protolayout.LayoutElementBuilders.FontStyle
+import androidx.wear.protolayout.LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER
+import androidx.wear.protolayout.LayoutElementBuilders.Image
+import androidx.wear.protolayout.LayoutElementBuilders.Spacer
+import androidx.wear.protolayout.LayoutElementBuilders.TEXT_ALIGN_CENTER
+import androidx.wear.protolayout.LayoutElementBuilders.Text
+import androidx.wear.protolayout.LayoutElementBuilders.VERTICAL_ALIGN_CENTER
+import androidx.wear.protolayout.ModifiersBuilders.Background
+import androidx.wear.protolayout.ModifiersBuilders.Corner
+import androidx.wear.protolayout.ModifiersBuilders.Modifiers
+import androidx.wear.protolayout.ResourceBuilders.AndroidImageResourceByResId
+import androidx.wear.protolayout.ResourceBuilders.ImageResource
 import androidx.wear.protolayout.ResourceBuilders.Resources
 import androidx.wear.protolayout.TimelineBuilders.Timeline
-import androidx.wear.protolayout.material3.Typography
-import androidx.wear.protolayout.material3.materialScope
-import androidx.wear.protolayout.material3.primaryLayout
-import androidx.wear.protolayout.material3.text
-import androidx.wear.protolayout.material3.textEdgeButton
 import androidx.wear.protolayout.modifiers.clickable
-import androidx.wear.protolayout.types.layoutString
 import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders.Tile
 import androidx.wear.tiles.TileService
+import com.example.bpmmunkzpulse.R
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 
-private const val TILE_RESOURCES_VERSION = "1"
+private const val TILE_RESOURCES_VERSION = "5"
+private const val TILE_LOGO_RESOURCE_ID = "bpm_munkz_tile_logo"
 
 class BpmMunkzTileService : TileService() {
-    override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<Tile> =
-        Futures.immediateFuture(
+    override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<Tile> {
+        val openApp = clickable(
+            action = launchAction(
+                ComponentName(
+                    packageName,
+                    MainActivity::class.java.name,
+                ),
+            ),
+        )
+        val openLabel = getString(R.string.tile_open)
+
+        return Futures.immediateFuture(
             Tile.Builder()
                 .setResourcesVersion(TILE_RESOURCES_VERSION)
                 .setTileTimeline(
                     Timeline.fromLayoutElement(
-                        materialScope(this, requestParams.deviceConfiguration) {
-                            primaryLayout(
-                                mainSlot = {
-                                    text(
-                                        text = "BPM Munkz Pulse".layoutString,
-                                        typography = Typography.DISPLAY_MEDIUM,
+                        Box.Builder()
+                            .setWidth(expand())
+                            .setHeight(expand())
+                            .setHorizontalAlignment(HORIZONTAL_ALIGN_CENTER)
+                            .setVerticalAlignment(VERTICAL_ALIGN_CENTER)
+                            .setModifiers(
+                                Modifiers.Builder()
+                                    .setClickable(openApp)
+                                    .setBackground(
+                                        Background.Builder()
+                                            .setColor(argb(0xFF000000.toInt()))
+                                            .build(),
                                     )
-                                },
-                                bottomSlot = {
-                                    textEdgeButton(
-                                        onClick = clickable(
-                                            action = launchAction(
-                                                ComponentName(
-                                                    packageName,
-                                                    MainActivity::class.java.name,
-                                                ),
-                                            ),
-                                        ),
-                                    ) {
-                                        text("Open".layoutString)
-                                    }
-                                },
+                                    .build(),
                             )
-                        },
+                            .addContent(
+                                Column.Builder()
+                                    .setWidth(wrap())
+                                    .setHeight(wrap())
+                                    .setHorizontalAlignment(HORIZONTAL_ALIGN_CENTER)
+                                    .addContent(
+                                        Image.Builder()
+                                            .setResourceId(TILE_LOGO_RESOURCE_ID)
+                                            .setWidth(dp(158f))
+                                            .setHeight(dp(158f))
+                                            .setContentScaleMode(CONTENT_SCALE_MODE_FIT)
+                                            .build(),
+                                    )
+                                    .addContent(
+                                        Spacer.Builder()
+                                            .setHeight(dp(10f))
+                                            .build(),
+                                    )
+                                    .addContent(
+                                        Box.Builder()
+                                            .setWidth(dp(118f))
+                                            .setHeight(dp(42f))
+                                            .setHorizontalAlignment(HORIZONTAL_ALIGN_CENTER)
+                                            .setVerticalAlignment(VERTICAL_ALIGN_CENTER)
+                                            .setModifiers(
+                                                Modifiers.Builder()
+                                                    .setClickable(openApp)
+                                                    .setBackground(
+                                                        Background.Builder()
+                                                            .setColor(argb(0xFFE9DDFF.toInt()))
+                                                            .setCorner(
+                                                                Corner.Builder()
+                                                                    .setRadius(dp(24f))
+                                                                    .build(),
+                                                            )
+                                                            .build(),
+                                                    )
+                                                    .build(),
+                                            )
+                                            .addContent(
+                                                Text.Builder()
+                                                    .setText(openLabel)
+                                                    .setMaxLines(1)
+                                                    .setMultilineAlignment(TEXT_ALIGN_CENTER)
+                                                    .setFontStyle(
+                                                        FontStyle.Builder()
+                                                            .setColor(argb(0xFF211934.toInt()))
+                                                            .setSize(sp(20f))
+                                                            .setWeight(FONT_WEIGHT_MEDIUM)
+                                                            .build(),
+                                                    )
+                                                    .build(),
+                                            )
+                                            .build(),
+                                    )
+                                    .build(),
+                            )
+                            .build(),
                     ),
                 )
                 .build(),
         )
+    }
 
     override fun onTileResourcesRequest(
         requestParams: RequestBuilders.ResourcesRequest,
@@ -61,6 +138,16 @@ class BpmMunkzTileService : TileService() {
         Futures.immediateFuture(
             Resources.Builder()
                 .setVersion(TILE_RESOURCES_VERSION)
+                .addIdToImageMapping(TILE_LOGO_RESOURCE_ID, tileLogoResource())
                 .build(),
         )
 }
+
+private fun tileLogoResource(): ImageResource =
+    ImageResource.Builder()
+        .setAndroidResourceByResId(
+            AndroidImageResourceByResId.Builder()
+                .setResourceId(R.drawable.bpm_munkz_app_logo)
+                .build(),
+        )
+        .build()
