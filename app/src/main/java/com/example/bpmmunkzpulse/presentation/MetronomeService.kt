@@ -1,5 +1,6 @@
 package com.example.bpmmunkzpulse.presentation
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -8,6 +9,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
 import android.media.AudioManager
@@ -67,7 +69,7 @@ data class MetronomeState(
     val accentBeat: Int = 1,
     val subdivisionCount: Int = 1,
     val beatAccentTypes: List<BeatAccentType> = defaultBeatAccentTypes(beatsPerMeasure, accentBeat),
-    val hapticsEnabled: Boolean = true,
+    val hapticsEnabled: Boolean = false,
     val beepEnabled: Boolean = false,
     val currentBeatIndex: Int = 1,
     val currentSubdivisionIndex: Int = 1,
@@ -77,6 +79,7 @@ data class MetronomeState(
     val beatFlash: Boolean = false,
     val flashingBeat: Int = 0,
     val beatClockStartedAtMs: Long = SystemClock.elapsedRealtime(),
+    val playbackStartedAtMs: Long = 0L,
 )
 
 class MetronomeService : Service() {
@@ -141,6 +144,7 @@ class MetronomeService : Service() {
     }
 
     fun startPlayback(config: MetronomeState = mutableState.value) {
+        val now = SystemClock.elapsedRealtime()
         mutableState.value = config
             .normalized()
             .copy(
@@ -149,7 +153,8 @@ class MetronomeService : Service() {
                 flashingBeat = 0,
                 currentBeatIndex = config.currentBeatIndex.coerceIn(1, config.beatsPerMeasure),
                 currentSubdivisionIndex = config.currentSubdivisionIndex.coerceIn(1, config.subdivisionCount),
-                beatClockStartedAtMs = SystemClock.elapsedRealtime(),
+                beatClockStartedAtMs = now,
+                playbackStartedAtMs = now,
             )
 
         applicationContext.saveRhythmState(mutableState.value)
@@ -167,6 +172,7 @@ class MetronomeService : Service() {
                 beatFlash = false,
                 flashingBeat = 0,
                 currentSubdivisionIndex = 1,
+                playbackStartedAtMs = 0L,
             )
         }
         wakeLock?.releaseIfHeld()
@@ -434,9 +440,13 @@ class MetronomeService : Service() {
     }
 
     private fun updateForegroundNotification() {
-        if (mutableState.value.isRunning) {
+        if (mutableState.value.isRunning && canPostNotifications()) {
             notificationManager().notify(METRONOME_NOTIFICATION_ID, buildNotification())
         }
+    }
+
+    private fun canPostNotifications(): Boolean {
+        return checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun buildNotification(): Notification {
@@ -579,6 +589,7 @@ private fun Intent.putMetronomeState(state: MetronomeState): Intent {
         .putExtra("current_subdivision_index", state.currentSubdivisionIndex)
         .putExtra("playlist_index", state.playlistIndex)
         .putExtra("song_index", state.songIndex)
+        .putExtra("playback_started_at_ms", state.playbackStartedAtMs)
 }
 
 private fun Intent.readMetronomeState(fallback: MetronomeState): MetronomeState {
@@ -599,6 +610,7 @@ private fun Intent.readMetronomeState(fallback: MetronomeState): MetronomeState 
         ),
         playlistIndex = getIntExtra("playlist_index", fallback.playlistIndex),
         songIndex = getIntExtra("song_index", fallback.songIndex),
+        playbackStartedAtMs = getLongExtra("playback_started_at_ms", fallback.playbackStartedAtMs),
     )
 }
 
@@ -635,7 +647,7 @@ internal fun Context.loadSavedRhythmState(): MetronomeState {
         subdivisionCount = prefs.getInt(RHYTHM_SUBDIVISION_COUNT_KEY, 1),
         beatAccentTypes = prefs.getString(RHYTHM_BEAT_ACCENT_TYPES_KEY, null)
             .toBeatAccentTypes(),
-        hapticsEnabled = prefs.getBoolean(RHYTHM_HAPTICS_ENABLED_KEY, true),
+        hapticsEnabled = prefs.getBoolean(RHYTHM_HAPTICS_ENABLED_KEY, false),
         beepEnabled = prefs.getBoolean(RHYTHM_BEEP_ENABLED_KEY, false),
         playlistIndex = prefs.getInt(RHYTHM_PLAYLIST_INDEX_KEY, 0),
         songIndex = prefs.getInt(RHYTHM_SONG_INDEX_KEY, 0),

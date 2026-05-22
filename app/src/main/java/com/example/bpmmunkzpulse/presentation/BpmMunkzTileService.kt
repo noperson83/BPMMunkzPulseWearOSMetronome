@@ -25,6 +25,7 @@ import androidx.wear.protolayout.ResourceBuilders.AndroidImageResourceByResId
 import androidx.wear.protolayout.ResourceBuilders.ImageResource
 import androidx.wear.protolayout.ResourceBuilders.Resources
 import androidx.wear.protolayout.TimelineBuilders.Timeline
+import androidx.wear.protolayout.expression.ProtoLayoutExperimental
 import androidx.wear.protolayout.modifiers.clickable
 import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders.Tile
@@ -36,6 +37,7 @@ import com.google.common.util.concurrent.ListenableFuture
 private const val TILE_RESOURCES_VERSION = "5"
 private const val TILE_LOGO_RESOURCE_ID = "bpm_munkz_tile_logo"
 
+@ProtoLayoutExperimental
 class BpmMunkzTileService : TileService() {
     override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<Tile> {
         val openApp = clickable(
