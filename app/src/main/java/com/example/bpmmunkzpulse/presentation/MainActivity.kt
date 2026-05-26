@@ -1005,8 +1005,11 @@ fun BeatPulseScreen() {
     ) {
         metronomeService?.state?.collect { state ->
             val nextState = filterMetronomeStateForVisibleUi(state)
+            val shouldUpdateRingVisuals = bigRingFlashMode != BigRingFlashMode.Off &&
+                nextState.hasDifferentPulseVisualsFrom(metronomeState)
             val shouldUpdateNow = !state.isRunning ||
-                !nextState.hasSameNonVisualStateAs(metronomeState)
+                !nextState.hasSameNonVisualStateAs(metronomeState) ||
+                shouldUpdateRingVisuals
 
             if (shouldUpdateNow && nextState != metronomeState) {
                 metronomeState = nextState
@@ -1029,8 +1032,14 @@ fun BeatPulseScreen() {
             if (!pagerIsMovingOrBetweenPages) {
                 metronomeService?.state?.value?.let { state ->
                     val nextState = filterMetronomeStateForVisibleUi(state)
+                    val shouldUpdateRingVisuals = bigRingFlashMode != BigRingFlashMode.Off &&
+                        nextState.hasDifferentPulseVisualsFrom(metronomeState)
                     if (
-                        (!state.isRunning || !nextState.hasSameNonVisualStateAs(metronomeState)) &&
+                        (
+                            !state.isRunning ||
+                                !nextState.hasSameNonVisualStateAs(metronomeState) ||
+                                shouldUpdateRingVisuals
+                            ) &&
                         nextState != metronomeState
                     ) {
                         metronomeState = nextState
@@ -6066,6 +6075,11 @@ private fun MetronomeState.hasSameNonVisualStateAs(other: MetronomeState): Boole
         songIndex == other.songIndex &&
         isRunning == other.isRunning &&
         playbackStartedAtMs == other.playbackStartedAtMs
+}
+
+private fun MetronomeState.hasDifferentPulseVisualsFrom(other: MetronomeState): Boolean {
+    return beatFlash != other.beatFlash ||
+        flashingBeat != other.flashingBeat
 }
 
 private fun MetronomeState.withPulseVisualsFrom(previousState: MetronomeState): MetronomeState {
