@@ -62,6 +62,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -88,9 +89,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -138,7 +142,7 @@ private const val PULSE_PAGE_COUNT = 4
 private const val AUDIO_SAMPLE_RATE = 44_100
 private const val AUDIO_FRAME_SIZE = 2_048
 private const val SPECTRUM_BAR_COUNT = 28
-private const val AUDIO_ANALYSIS_INTERVAL_MS = 120L
+private const val AUDIO_UI_UPDATE_INTERVAL_MS = 140L
 private const val RHYTHM_VISUAL_MAX_DELAY_MS = 24L
 private const val RHYTHM_VISUAL_WAKE_AHEAD_MS = 6L
 private const val DEFAULT_A4_REFERENCE_HZ = 440
@@ -168,6 +172,7 @@ internal object BeatTimingTrace {
     )
 
     private var beatId = 0L
+    private var currentBeat = 0
     private var beatStartedAtMs = 0L
     private var events = mutableListOf<TimingEvent>()
 
@@ -178,11 +183,18 @@ internal object BeatTimingTrace {
         accentType: BeatAccentType,
     ) {
         beatId += 1L
+        currentBeat = beat
         beatStartedAtMs = SystemClock.elapsedRealtime()
         events = mutableListOf(
             TimingEvent("beat tick b$beat ${accentType.name} @${bpm}bpm", 0L),
         )
         Log.d(TAG, "beat#$beatId high->low: ${formatEvents()}")
+    }
+
+    @Synchronized
+    fun markForBeat(label: String, beat: Int) {
+        if (currentBeat != beat) return
+        mark(label)
     }
 
     @Synchronized
@@ -345,24 +357,48 @@ private data class BeatVisualState(
     val beatFlash: Boolean,
 )
 
-private data class BigRingVisualState(
-    val beatFlash: Boolean = false,
-    val flashingAccentType: BeatAccentType = BeatAccentType.Silent,
-)
-
 private data class AudioAnalysisState(
     val frequencyHz: Float? = null,
     val noteName: String = "--",
     val cents: Int = 0,
     val level: Float = 0f,
+    val detectedTempoBpm: Int? = null,
     val recentNotes: List<String> = emptyList(),
     val guessedKey: String? = null,
+    val likelyChords: List<String> = emptyList(),
     val spectrum: List<Float> = List(SPECTRUM_BAR_COUNT) { 0f },
+)
+
+private data class KeyAnalysis(
+    val recentNotes: List<String>,
+    val guessedKey: String?,
+    val likelyChords: List<String>,
+)
+
+private data class KeyGuess(
+    val rootIndex: Int,
+    val displayName: String,
+    val scale: ScaleProfile,
+    val score: Float,
+)
+
+private data class ScaleProfile(
+    val displaySuffix: String,
+    val offsets: List<Int>,
+    val chordQualities: List<String>,
 )
 
 private data class SpectrumPeak(
     val frequencyHz: Float,
-    val relativeDb: Float,
+    val level: Float,
+    val bandLabel: String,
+)
+
+private data class SpectrumBand(
+    val startHz: Float,
+    val endHz: Float,
+    val label: String,
+    val color: Color,
 )
 
 private enum class TunerListenProfile(
@@ -2622,49 +2658,6 @@ private fun Int.toSupportedSubdivisionCount(): Int {
 }
 
 @Composable
-private fun PulseBeatDot(
-    beatFlash: Boolean,
-    accentType: BeatAccentType,
-) {
-    val dotRadius = when (accentType) {
-        BeatAccentType.Big -> if (beatFlash) 10.dp else 5.dp
-        BeatAccentType.Medium -> if (beatFlash) 8.dp else 4.dp
-        BeatAccentType.Small -> if (beatFlash) 6.5.dp else 3.5.dp
-        BeatAccentType.Silent -> if (beatFlash) 10.dp else 5.dp
-    }
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val secondaryColor = MaterialTheme.colorScheme.secondary
-    val dotColor = when (accentType) {
-        BeatAccentType.Big -> if (beatFlash) primaryColor else secondaryColor.copy(alpha = 1f)
-        BeatAccentType.Medium -> if (beatFlash) primaryColor else secondaryColor.copy(alpha = 0.9f)
-        BeatAccentType.Small -> if (beatFlash) primaryColor else secondaryColor.copy(alpha = 0.72f)
-        BeatAccentType.Silent -> Color.Transparent
-    }
-    val silentBorderColor = secondaryColor.copy(alpha = if (beatFlash) 0.9f else 0.55f)
-
-    Canvas(
-        modifier = Modifier
-            .size(24.dp),
-    ) {
-        val center = Offset(size.width / 2f, size.height / 2f)
-        if (accentType == BeatAccentType.Silent) {
-            drawCircle(
-                color = silentBorderColor,
-                radius = dotRadius.toPx(),
-                center = center,
-                style = Stroke(width = 2.dp.toPx()),
-            )
-        } else {
-            drawCircle(
-                color = dotColor,
-                radius = dotRadius.toPx(),
-                center = center,
-            )
-        }
-    }
-}
-
-@Composable
 private fun SubdivisionDots(
     subdivisionCount: Int,
     currentSubdivisionIndex: Int,
@@ -2745,6 +2738,9 @@ private fun rememberRhythmBeatVisualState(
             ),
         )
     }
+    val latestFallbackBeatIndex by rememberUpdatedState(fallbackBeatIndex)
+    val latestFallbackSubdivisionIndex by rememberUpdatedState(fallbackSubdivisionIndex)
+    val latestFallbackBeatFlash by rememberUpdatedState(fallbackBeatFlash)
 
     LaunchedEffect(
         isRunning,
@@ -2753,15 +2749,12 @@ private fun rememberRhythmBeatVisualState(
         beatsPerMeasure,
         subdivisionCount,
         beatClockStartedAtMs,
-        fallbackBeatIndex,
-        fallbackSubdivisionIndex,
-        fallbackBeatFlash,
     ) {
         if (!isRunning || beatClockStartedAtMs <= 0L) {
             beatVisualState = BeatVisualState(
-                currentBeatIndex = fallbackBeatIndex.coerceIn(1, beatsPerMeasure.coerceAtLeast(1)),
-                currentSubdivisionIndex = fallbackSubdivisionIndex.coerceAtLeast(1),
-                beatFlash = fallbackBeatFlash,
+                currentBeatIndex = latestFallbackBeatIndex.coerceIn(1, beatsPerMeasure.coerceAtLeast(1)),
+                currentSubdivisionIndex = latestFallbackSubdivisionIndex.coerceAtLeast(1),
+                beatFlash = latestFallbackBeatFlash,
             )
             return@LaunchedEffect
         }
@@ -2782,7 +2775,10 @@ private fun rememberRhythmBeatVisualState(
                     beatClockStartedAtMs = beatClockStartedAtMs,
                 )
             ) {
-                BeatTimingTrace.mark("rhythm visual loop")
+                BeatTimingTrace.markForBeat(
+                    label = "rhythm visual loop",
+                    beat = nextBeatVisualState.currentBeatIndex,
+                )
             }
             beatVisualState = nextBeatVisualState
             delay(
@@ -2978,7 +2974,7 @@ private fun PlaylistClockPage(
             ) {
                 Text(
                     text = song.musicalKey,
-                    fontSize = 24.sp,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
@@ -3665,6 +3661,9 @@ private fun ClockImagePicker(
                     ClockImageChoiceButton(
                         text = choice.labelFor(appLanguage),
                         selected = selectedIndex == choiceIndex,
+                        modifier = Modifier
+                            .width(42.dp)
+                            .height(26.dp),
                         onClick = { onClockImageChoice(choiceIndex) },
                     )
                 }
@@ -3687,6 +3686,9 @@ private fun BigRingModePicker(
             ClockImageChoiceButton(
                 text = choice.labelFor(appLanguage),
                 selected = selectedMode == choice.mode,
+                modifier = Modifier
+                    .width(42.dp)
+                    .height(26.dp),
                 onClick = { onModeChoice(choice.mode) },
             )
         }
@@ -3697,11 +3699,9 @@ private fun BigRingModePicker(
 private fun ClockImageChoiceButton(
     text: String,
     selected: Boolean,
-    modifier: Modifier = Modifier
-        .width(42.dp)
-        .height(26.dp),
-    fontSize: TextUnit = 9.sp,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 9.sp,
 ) {
     val shape = RoundedCornerShape(50)
     val backgroundColor = if (selected) {
@@ -3759,6 +3759,9 @@ private fun LanguagePicker(
                     AppLanguage.Spanish -> "ES"
                 },
                 selected = selectedLanguage == language,
+                modifier = Modifier
+                    .width(42.dp)
+                    .height(26.dp),
                 onClick = { onLanguageChoice(language) },
             )
         }
@@ -3800,14 +3803,13 @@ private fun SettingsPage(
 
     Box(
         modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .fillMaxSize(),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             modifier = Modifier
                 .verticalScroll(rememberScrollState())
-                .padding(vertical = 14.dp),
+                .padding(horizontal = 12.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
@@ -3852,7 +3854,6 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(3.dp))
 
             AccentIntensityPicker(
-                selectedMode = accentIntensityMode,
                 accentIntensityRanges = accentIntensityRanges,
                 appLanguage = appLanguage,
                 onClick = {
@@ -4138,24 +4139,48 @@ private fun A4ReferenceControl(
 
 @Composable
 private fun AccentIntensityPicker(
-    selectedMode: AccentIntensityMode,
     accentIntensityRanges: List<AccentIntensityRange>,
     appLanguage: AppLanguage,
     onClick: () -> Unit,
 ) {
-    val summaryText = AccentIntensityChoices.joinToString(separator = " ") { choice ->
-        "${choice.labelFor(appLanguage)} ${accentIntensityRanges.rangeFor(choice.mode).valuePercent}"
-    }
-
-    SettingButton(
-        text = summaryText,
-        selected = true,
+    Button(
+        onClick = onClick,
         modifier = Modifier
             .width(166.dp)
-            .height(32.dp),
-        fontSize = 8.sp,
-        onClick = onClick,
-    )
+            .height(42.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AccentIntensityChoices.forEach { choice ->
+                val value = accentIntensityRanges.rangeFor(choice.mode).valuePercent
+                Column(
+                    modifier = Modifier.width(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = choice.labelFor(appLanguage),
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = value.toString(),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -4176,10 +4201,20 @@ private fun AccentIntensityChoicePopup(
             .clickable(onClick = {}),
         contentAlignment = Alignment.Center,
     ) {
+        ArchedDoneButton(
+            text = dismissText,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 0.dp, end = 0.dp),
+            onClick = onDismiss,
+        )
+
+        val selectedRange = accentIntensityRanges.rangeFor(selectedMode)
+
         Column(
             modifier = Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 16.dp),
+                .width(160.dp)
+                .padding(top = 13.dp, bottom = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
@@ -4192,38 +4227,62 @@ private fun AccentIntensityChoicePopup(
             Spacer(modifier = Modifier.height(7.dp))
 
             AccentIntensityChoices.forEach { choice ->
-                AccentIntensityOptionButton(
+                AccentIntensityTypePill(
                     choice = choice,
                     range = accentIntensityRanges.rangeFor(choice.mode),
                     selected = selectedMode == choice.mode,
                     appLanguage = appLanguage,
                     onClick = { onModeChoice(choice.mode) },
-                    onValueChange = { value -> onValueChange(choice.mode, value) },
                 )
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
             }
 
-            SmallCommandButton(
-                text = dismissText,
-                modifier = Modifier
-                    .width(62.dp)
-                    .height(26.dp),
-                fontSize = 10.sp,
-                onClick = onDismiss,
-            )
+            Spacer(modifier = Modifier.height(1.dp))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SmallCommandButton(
+                    text = "-",
+                    modifier = Modifier
+                        .width(34.dp)
+                        .height(26.dp),
+                    fontSize = 14.sp,
+                    onClick = {
+                        onValueChange(
+                            selectedMode,
+                            (selectedRange.valuePercent - 1).coerceAtLeast(selectedRange.minPercent),
+                        )
+                    },
+                )
+
+                SmallCommandButton(
+                    text = "+",
+                    modifier = Modifier
+                        .width(34.dp)
+                        .height(26.dp),
+                    fontSize = 14.sp,
+                    onClick = {
+                        onValueChange(
+                            selectedMode,
+                            (selectedRange.valuePercent + 1).coerceAtMost(selectedRange.maxPercent),
+                        )
+                    },
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun AccentIntensityOptionButton(
+private fun AccentIntensityTypePill(
     choice: AccentIntensityChoice,
     range: AccentIntensityRange,
     selected: Boolean,
     appLanguage: AppLanguage,
     onClick: () -> Unit,
-    onValueChange: (Int) -> Unit,
 ) {
     val shape = RoundedCornerShape(50)
     val backgroundColor = if (selected) {
@@ -4239,13 +4298,13 @@ private fun AccentIntensityOptionButton(
 
     Column(
         modifier = Modifier
-            .width(166.dp),
+            .width(142.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(
             modifier = Modifier
-                .width(154.dp)
-                .height(28.dp)
+                .width(138.dp)
+                .height(26.dp)
                 .clip(shape)
                 .background(backgroundColor, shape)
                 .border(
@@ -4285,44 +4344,6 @@ private fun AccentIntensityOptionButton(
                 maxLines = 1,
             )
         }
-
-        Spacer(modifier = Modifier.height(3.dp))
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SmallCommandButton(
-                text = "-",
-                modifier = Modifier
-                    .width(22.dp)
-                    .height(20.dp),
-                fontSize = 10.sp,
-                onClick = {
-                    onValueChange((range.valuePercent - 1).coerceAtLeast(range.minPercent))
-                },
-            )
-
-            Text(
-                text = "${range.valuePercent}%",
-                modifier = Modifier.width(40.dp),
-                fontSize = 9.sp,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-            )
-
-            SmallCommandButton(
-                text = "+",
-                modifier = Modifier
-                    .width(22.dp)
-                    .height(20.dp),
-                fontSize = 10.sp,
-                onClick = {
-                    onValueChange((range.valuePercent + 1).coerceAtMost(range.maxPercent))
-                },
-            )
-        }
     }
 }
 
@@ -4346,6 +4367,9 @@ private fun KeepScreenModeButtons(
             ClockImageChoiceButton(
                 text = label,
                 selected = selectedMode == mode,
+                modifier = Modifier
+                    .width(42.dp)
+                    .height(26.dp),
                 onClick = { onModeChoice(mode) },
             )
         }
@@ -4476,6 +4500,7 @@ private fun TunerPage(
     onRequestMicPermission: () -> Unit,
 ) {
     val guessedKey = audioAnalysisState.guessedKey
+    val likelyChords = audioAnalysisState.likelyChords
 
     Box(
         modifier = Modifier
@@ -4501,6 +4526,17 @@ private fun TunerPage(
             }
             return@Box
         }
+
+        AudioTempoReadout(
+            detectedBpm = audioAnalysisState.detectedTempoBpm,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 18.dp, top = 34.dp)
+                .width(52.dp),
+            fontSize = 8.sp,
+            numberFontSize = 13.sp,
+            color = Color.White.copy(alpha = 0.9f),
+        )
 
         Column(
             modifier = Modifier
@@ -4578,8 +4614,8 @@ private fun TunerPage(
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .padding(end = 4.dp, top = 36.dp)
-                .width(42.dp),
+                .padding(end = 3.dp)
+                .width(48.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
@@ -4593,12 +4629,25 @@ private fun TunerPage(
 
             Text(
                 text = guessedKey ?: "--",
-                fontSize = 19.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
             )
+
+            Spacer(modifier = Modifier.height(2.dp))
+
+            likelyChords.take(3).forEach { chord ->
+                Text(
+                    text = chord,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.88f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                )
+            }
         }
 
         if (guessedKey != null) {
@@ -4645,7 +4694,20 @@ private fun SpectrumAnalyzerPage(
                 color = MaterialTheme.colorScheme.primary,
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(2.dp))
+
+            AudioTempoReadout(
+                detectedBpm = audioAnalysisState.detectedTempoBpm,
+            )
+
+            Text(
+                text = audioAnalysisState.guessedKey?.let { "Key of $it" } ?: "Key of --",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White.copy(alpha = 0.88f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
 
             if (!micPermissionGranted) {
                 MicPermissionButton(appText = appText, onClick = onRequestMicPermission)
@@ -4655,7 +4717,7 @@ private fun SpectrumAnalyzerPage(
                     peakReading = peakReading,
                     modifier = Modifier
                         .width(176.dp)
-                        .height(118.dp),
+                        .height(110.dp),
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -4663,7 +4725,7 @@ private fun SpectrumAnalyzerPage(
                 Text(
                     text = peakReading?.let { peak ->
                         val noteName = peak.frequencyHz.toNoteReading(a4ReferenceHz).first
-                        "${peak.frequencyHz.roundToInt()} Hz  $noteName  ${peak.relativeDb.roundToInt()} dB"
+                        "${peak.frequencyHz.roundToInt()} Hz  $noteName  ${peak.bandLabel}"
                     } ?: "-- Hz",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
@@ -4672,6 +4734,32 @@ private fun SpectrumAnalyzerPage(
             }
         }
     }
+}
+
+@Composable
+private fun AudioTempoReadout(
+    detectedBpm: Int?,
+    modifier: Modifier = Modifier.width(60.dp),
+    fontSize: TextUnit = 10.sp,
+    numberFontSize: TextUnit = fontSize,
+    color: Color = MaterialTheme.colorScheme.primary,
+) {
+    Text(
+        text = detectedBpm?.let { bpm ->
+            buildAnnotatedString {
+                withStyle(SpanStyle(fontSize = numberFontSize)) {
+                    append(bpm.toString())
+                }
+                append(" BPM")
+            }
+        } ?: buildAnnotatedString { append("-- BPM") },
+        modifier = modifier,
+        fontSize = fontSize,
+        fontWeight = FontWeight.Bold,
+        color = color,
+        textAlign = TextAlign.Center,
+        maxLines = 1,
+    )
 }
 
 @Composable
@@ -4696,25 +4784,65 @@ private fun MicPermissionButton(
 
 @Composable
 private fun TunerNeedle(cents: Int) {
-    val normalized = cents.coerceIn(-50, 50) / 50f
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.secondary
     Canvas(
         modifier = Modifier
             .width(132.dp)
-            .height(34.dp),
+            .height(38.dp),
     ) {
-        val centerY = size.height * 0.62f
-        val startX = 12.dp.toPx()
-        val endX = size.width - 12.dp.toPx()
+        val centerY = size.height * 0.58f
+        val startX = 8.dp.toPx()
+        val endX = size.width - 8.dp.toPx()
         val centerX = size.width / 2f
-        val needleX = centerX + normalized * (endX - centerX)
+        val leftOuterEndX = startX + (endX - startX) * 0.18f
+        val rightOuterStartX = endX - (endX - startX) * 0.18f
+        val clampedCents = cents.coerceIn(-100, 100)
+        val needleX = when {
+            clampedCents < -50 -> {
+                val progress = ((clampedCents + 100) / 50f).coerceIn(0f, 1f)
+                startX + (leftOuterEndX - startX) * progress
+            }
+            clampedCents > 50 -> {
+                val progress = ((clampedCents - 50) / 50f).coerceIn(0f, 1f)
+                rightOuterStartX + (endX - rightOuterStartX) * progress
+            }
+            else -> {
+                val progress = ((clampedCents + 50) / 100f).coerceIn(0f, 1f)
+                leftOuterEndX + (rightOuterStartX - leftOuterEndX) * progress
+            }
+        }
+        val tuned = abs(cents) <= 5
+        val dotRadius = when {
+            abs(cents) <= 2 -> 8.dp.toPx()
+            tuned -> 7.dp.toPx()
+            else -> 5.dp.toPx()
+        }
+        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.White.copy(alpha = 0.54f).toArgb()
+            textSize = 6.sp.toPx()
+            textAlign = Paint.Align.CENTER
+        }
 
         drawLine(
-            color = Color.White.copy(alpha = 0.32f),
+            color = Color.White.copy(alpha = 0.2f),
             start = Offset(startX, centerY),
+            end = Offset(leftOuterEndX, centerY),
+            strokeWidth = 1.4.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = Color.White.copy(alpha = 0.36f),
+            start = Offset(leftOuterEndX, centerY),
+            end = Offset(rightOuterStartX, centerY),
+            strokeWidth = 3.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = Color.White.copy(alpha = 0.2f),
+            start = Offset(rightOuterStartX, centerY),
             end = Offset(endX, centerY),
-            strokeWidth = 2.dp.toPx(),
+            strokeWidth = 1.4.dp.toPx(),
             cap = StrokeCap.Round,
         )
         drawLine(
@@ -4724,9 +4852,36 @@ private fun TunerNeedle(cents: Int) {
             strokeWidth = 2.dp.toPx(),
             cap = StrokeCap.Round,
         )
+        listOf(
+            startX to "-100",
+            leftOuterEndX to "-50",
+            centerX to "0",
+            rightOuterStartX to "+50",
+            endX to "+100",
+        ).forEach { (x, label) ->
+            drawLine(
+                color = Color.White.copy(alpha = if (label == "0") 0.44f else 0.26f),
+                start = Offset(x, centerY - 4.dp.toPx()),
+                end = Offset(x, centerY + 4.dp.toPx()),
+                strokeWidth = 1.dp.toPx(),
+            )
+            drawContext.canvas.nativeCanvas.drawText(
+                label,
+                x,
+                centerY + 14.dp.toPx(),
+                labelPaint,
+            )
+        }
+        if (tuned) {
+            drawCircle(
+                color = primaryColor.copy(alpha = 0.22f),
+                radius = dotRadius + 4.dp.toPx(),
+                center = Offset(needleX, centerY),
+            )
+        }
         drawCircle(
-            color = if (abs(cents) <= 5) primaryColor else secondaryColor,
-            radius = 5.dp.toPx(),
+            color = if (tuned) primaryColor else secondaryColor,
+            radius = dotRadius,
             center = Offset(needleX, centerY),
         )
     }
@@ -4741,9 +4896,10 @@ private fun SpectrumAnalyzerGraph(
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.secondary
     val axisColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.52f)
+    val spectrumBands = remember { spectrumBands() }
     Canvas(modifier = modifier) {
         val chartLeft = 24.dp.toPx()
-        val chartTop = 14.dp.toPx()
+        val chartTop = 6.dp.toPx()
         val chartRight = size.width - 2.dp.toPx()
         val chartBottom = size.height - 18.dp.toPx()
         val chartWidth = (chartRight - chartLeft).coerceAtLeast(1f)
@@ -4753,9 +4909,6 @@ private fun SpectrumAnalyzerGraph(
         val maxFrequency = 10_000f
         val logMin = log2(minFrequency)
         val logMax = log2(maxFrequency)
-        val minDb = -60f
-        val maxDb = 0f
-        val dbRange = maxDb - minDb
 
         fun frequencyToX(frequency: Float): Float {
             val normalized = ((log2(frequency.coerceIn(minFrequency, maxFrequency)) - logMin) / (logMax - logMin))
@@ -4763,12 +4916,10 @@ private fun SpectrumAnalyzerGraph(
             return chartLeft + (chartWidth * normalized)
         }
 
-        fun dbToY(db: Float): Float {
-            val normalized = ((maxDb - db.coerceIn(minDb, maxDb)) / dbRange).coerceIn(0f, 1f)
-            return chartTop + (chartHeight * normalized)
+        fun levelToY(level: Float): Float {
+            val shapedLevel = sqrt(level.coerceIn(0f, 1f))
+            return chartBottom - (chartHeight * shapedLevel)
         }
-
-        fun levelToDb(level: Float): Float = level.toRelativeDb(minDb)
 
         drawRect(
             color = Color.Black.copy(alpha = 0.22f),
@@ -4776,14 +4927,15 @@ private fun SpectrumAnalyzerGraph(
             size = androidx.compose.ui.geometry.Size(chartWidth, chartHeight),
         )
 
-        drawRect(
-            color = Color.White.copy(alpha = 0.16f),
-            topLeft = Offset(frequencyToX(20f), chartTop),
-            size = androidx.compose.ui.geometry.Size(
-                (frequencyToX(55f) - frequencyToX(20f)).coerceAtLeast(1f),
-                chartHeight,
-            ),
-        )
+        spectrumBands.forEach { band ->
+            val left = frequencyToX(band.startHz)
+            val right = frequencyToX(band.endHz)
+            drawRect(
+                color = band.color.copy(alpha = 0.16f),
+                topLeft = Offset(left, chartTop),
+                size = androidx.compose.ui.geometry.Size((right - left).coerceAtLeast(1f), chartHeight),
+            )
+        }
 
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = axisColor.toArgb()
@@ -4802,22 +4954,27 @@ private fun SpectrumAnalyzerGraph(
         }
 
         drawContext.canvas.nativeCanvas.drawText(
-            "Rel dB",
+            "Energy",
             chartLeft - 5.dp.toPx(),
             chartTop - 6.dp.toPx(),
             axisTitlePaint,
         )
 
-        listOf(0f, -12f, -24f, -36f, -48f, -60f).forEach { db ->
-            val y = dbToY(db)
+        listOf(
+            1f to "Hi",
+            0.56f to "Med",
+            0.2f to "Low",
+            0f to "0",
+        ).forEach { (level, label) ->
+            val y = levelToY(level)
             drawLine(
-                color = axisColor.copy(alpha = if (db == 0f) 0.24f else 0.16f),
+                color = axisColor.copy(alpha = if (level == 1f) 0.24f else 0.16f),
                 start = Offset(chartLeft, y),
                 end = Offset(chartRight, y),
                 strokeWidth = 1.dp.toPx(),
             )
             drawContext.canvas.nativeCanvas.drawText(
-                "${db.roundToInt()}dB",
+                label,
                 chartLeft - 5.dp.toPx(),
                 y + 2.5.dp.toPx(),
                 textPaint,
@@ -4853,11 +5010,11 @@ private fun SpectrumAnalyzerGraph(
             val endFrequency = minFrequency * (maxFrequency / minFrequency).pow(endProgress)
             val left = frequencyToX(startFrequency)
             val right = frequencyToX(endFrequency)
-            val db = levelToDb(level)
-            val top = dbToY(db)
+            val top = levelToY(level)
             val barWidth = (right - left - 1.dp.toPx()).coerceAtLeast(1f)
+            val bandColor = spectrumBandForFrequency(startFrequency, spectrumBands).color
             drawRoundRect(
-                color = primaryColor.copy(alpha = 0.18f + level.coerceIn(0f, 1f) * 0.34f),
+                color = bandColor.copy(alpha = 0.24f + level.coerceIn(0f, 1f) * 0.5f),
                 topLeft = Offset(left, top),
                 size = androidx.compose.ui.geometry.Size(barWidth, chartBottom - top),
                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx()),
@@ -4872,8 +5029,7 @@ private fun SpectrumAnalyzerGraph(
                 } else {
                     minFrequency * (maxFrequency / minFrequency).pow(index.toFloat() / points.lastIndex)
                 }
-                val db = levelToDb(level)
-                lineTo(frequencyToX(frequency), dbToY(db))
+                lineTo(frequencyToX(frequency), levelToY(level))
             }
             lineTo(chartRight, chartBottom)
             close()
@@ -4889,10 +5045,9 @@ private fun SpectrumAnalyzerGraph(
             val frequency = if (points.size == 1) {
                 30f
             } else {
-                minFrequency * (maxFrequency / minFrequency).pow(index.toFloat() / points.lastIndex)
-            }
-            val db = levelToDb(level)
-            val point = Offset(frequencyToX(frequency), dbToY(db))
+                    minFrequency * (maxFrequency / minFrequency).pow(index.toFloat() / points.lastIndex)
+                }
+            val point = Offset(frequencyToX(frequency), levelToY(level))
             previousPoint?.let { previous ->
                 drawLine(
                     color = primaryColor.copy(alpha = 0.48f),
@@ -4907,7 +5062,7 @@ private fun SpectrumAnalyzerGraph(
 
         peakReading?.let { peak ->
             val peakX = frequencyToX(peak.frequencyHz)
-            val peakY = dbToY(peak.relativeDb)
+            val peakY = levelToY(peak.level)
             drawLine(
                 color = secondaryColor.copy(alpha = 0.82f),
                 start = Offset(peakX, chartTop),
@@ -5060,8 +5215,8 @@ private fun BigPulseRingOverlay(
 @Composable
 private fun BigPulseRing(
     colorArgb: Int,
-    alpha: Float = 0.95f,
     modifier: Modifier = Modifier,
+    alpha: Float = 0.95f,
 ) {
     Canvas(modifier = modifier) {
         if (alpha <= 0f) return@Canvas
@@ -5811,6 +5966,10 @@ private suspend fun runAudioAnalyzer(
     }
     val buffer = ShortArray(AUDIO_FRAME_SIZE)
     val pitchAverager = TunerPitchAverager(listenProfile)
+    val tempoEstimator = MicTempoEstimator()
+    var audioSamplePosition = 0L
+    var lastUiUpdateElapsedMs = 0L
+    var lastPublishedTempoBpm: Int? = null
 
     try {
         withContext(Dispatchers.IO) {
@@ -5822,18 +5981,29 @@ private suspend fun runAudioAnalyzer(
                 recorder.read(buffer, 0, buffer.size)
             }
             if (read > 0) {
-                onAnalysis(
-                    analyzeAudioFrame(
-                        buffer = buffer,
-                        read = read,
-                        listenProfile = listenProfile,
-                        pitchAverager = pitchAverager,
-                        a4ReferenceHz = a4ReferenceHz,
-                        includeSpectrum = includeSpectrum,
-                    ),
+                val frameStartAudioMs = (audioSamplePosition * 1_000L) / AUDIO_SAMPLE_RATE
+                audioSamplePosition += read
+                val analysis = analyzeAudioFrame(
+                    buffer = buffer,
+                    read = read,
+                    frameStartAudioMs = frameStartAudioMs,
+                    listenProfile = listenProfile,
+                    pitchAverager = pitchAverager,
+                    tempoEstimator = tempoEstimator,
+                    a4ReferenceHz = a4ReferenceHz,
+                    includeSpectrum = includeSpectrum,
                 )
+                val nowElapsedMs = SystemClock.elapsedRealtime()
+                val tempoChanged = analysis.detectedTempoBpm != lastPublishedTempoBpm
+                if (
+                    nowElapsedMs - lastUiUpdateElapsedMs >= AUDIO_UI_UPDATE_INTERVAL_MS ||
+                    tempoChanged
+                ) {
+                    onAnalysis(analysis)
+                    lastUiUpdateElapsedMs = nowElapsedMs
+                    lastPublishedTempoBpm = analysis.detectedTempoBpm
+                }
             }
-            delay(AUDIO_ANALYSIS_INTERVAL_MS)
         }
     } finally {
         withContext(Dispatchers.IO) {
@@ -5846,29 +6016,43 @@ private suspend fun runAudioAnalyzer(
 private fun analyzeAudioFrame(
     buffer: ShortArray,
     read: Int,
+    frameStartAudioMs: Long,
     listenProfile: TunerListenProfile,
     pitchAverager: TunerPitchAverager,
+    tempoEstimator: MicTempoEstimator,
     a4ReferenceHz: Int,
     includeSpectrum: Boolean,
 ): AudioAnalysisState {
     val sampleCount = read.coerceIn(1, buffer.size)
     var sumSquares = 0.0
+    var peak = 0f
+    var peakIndex = 0
     for (index in 0 until sampleCount) {
         val sample = buffer[index] / Short.MAX_VALUE.toFloat()
+        val sampleAbs = abs(sample)
+        if (sampleAbs > peak) {
+            peak = sampleAbs
+            peakIndex = index
+        }
         sumSquares += sample * sample
     }
     val level = sqrt(sumSquares / sampleCount).toFloat().coerceIn(0f, 1f)
+    val transientLevel = maxOf(level, peak * 0.45f).coerceIn(0f, 1f)
+    val transientAudioTimeMs = frameStartAudioMs + ((peakIndex * 1_000L) / AUDIO_SAMPLE_RATE)
     val frequency = pitchAverager.average(detectPitchHz(buffer, sampleCount, listenProfile))
     val note = frequency?.toNoteReading(a4ReferenceHz)
-    val noteSummary = pitchAverager.noteSummary(note?.first)
+    val keyAnalysis = pitchAverager.noteSummary(note?.first)
+    val detectedTempoBpm = tempoEstimator.estimate(level = transientLevel, audioTimeMs = transientAudioTimeMs)
 
     return AudioAnalysisState(
         frequencyHz = frequency,
         noteName = note?.first ?: "--",
         cents = note?.second ?: 0,
         level = level,
-        recentNotes = noteSummary.first,
-        guessedKey = noteSummary.second,
+        detectedTempoBpm = detectedTempoBpm,
+        recentNotes = keyAnalysis.recentNotes,
+        guessedKey = keyAnalysis.guessedKey,
+        likelyChords = keyAnalysis.likelyChords,
         spectrum = if (includeSpectrum) buildSpectrum(buffer, sampleCount) else emptyList(),
     )
 }
@@ -5935,7 +6119,7 @@ private class TunerPitchAverager(
         return recentFrequencies.smartAverageOrNull()
     }
 
-    fun noteSummary(noteName: String?): Pair<List<String>, String?> {
+    fun noteSummary(noteName: String?): KeyAnalysis {
         val noteClass = noteName?.toNoteClass()
         if (noteClass != null) {
             recentNoteClasses += noteClass
@@ -5944,66 +6128,246 @@ private class TunerPitchAverager(
             }
         }
 
-        return recentNoteClasses.takeLast(8) to guessMusicalKey(recentNoteClasses)
+        return analyzeMusicalKey(recentNoteClasses)
     }
 }
 
+private class MicTempoEstimator {
+    private val onsetTimesMs = mutableListOf<Long>()
+    private var smoothedLevel = 0f
+    private var previousLevel = 0f
+    private var lastOnsetMs = 0L
+    private var stableTempoBpm: Int? = null
+    private var pendingTempoBpm: Int? = null
+    private var pendingTempoCount = 0
+
+    fun estimate(level: Float, audioTimeMs: Long): Int? {
+        val safeLevel = level.coerceIn(0f, 1f)
+        if (lastOnsetMs > 0L && audioTimeMs - lastOnsetMs > TEMPO_DETECTION_TIMEOUT_MS) {
+            onsetTimesMs.clear()
+            stableTempoBpm = null
+            pendingTempoBpm = null
+            pendingTempoCount = 0
+        }
+        smoothedLevel = if (smoothedLevel <= 0f) {
+            safeLevel
+        } else {
+            (smoothedLevel * 0.88f) + (safeLevel * 0.12f)
+        }
+
+        val levelJump = safeLevel - previousLevel
+        val isOnset = safeLevel > 0.012f &&
+            levelJump > 0.006f &&
+            safeLevel > smoothedLevel * 1.18f &&
+            audioTimeMs - lastOnsetMs >= MIN_TEMPO_ONSET_INTERVAL_MS
+
+        previousLevel = safeLevel
+        if (!isOnset) return stableTempoBpm
+
+        lastOnsetMs = audioTimeMs
+        onsetTimesMs += audioTimeMs
+        while (onsetTimesMs.size > TEMPO_ONSET_HISTORY_COUNT) {
+            onsetTimesMs.removeAt(0)
+        }
+
+        estimateTempoFromOnsets(hasStableTempo = stableTempoBpm != null)?.let { candidateBpm ->
+            updateStableTempo(candidateBpm)
+        }
+        return stableTempoBpm
+    }
+
+    private fun estimateTempoFromOnsets(hasStableTempo: Boolean): Int? {
+        if (onsetTimesMs.size < 4) return null
+
+        val intervals = onsetTimesMs
+            .zipWithNext { previous, current -> current - previous }
+            .filter { it in MIN_TEMPO_ONSET_INTERVAL_MS..MAX_TEMPO_ONSET_INTERVAL_MS }
+            .takeLast(TEMPO_INTERVAL_WINDOW_COUNT)
+        val minimumIntervalCount = if (hasStableTempo) 4 else 3
+        if (intervals.size < minimumIntervalCount) return null
+
+        val bpmCandidates = intervals
+            .map { intervalMs ->
+                (60_000f / intervalMs).roundToInt()
+                    .normalizedDetectedTempo()
+                    .coerceIn(MIN_BPM, MAX_BPM)
+            }
+            .sorted()
+
+        val medianBpm = bpmCandidates[bpmCandidates.size / 2]
+        val clustered = bpmCandidates.filter { bpm ->
+            abs(bpm - medianBpm) <= TEMPO_CLUSTER_TOLERANCE_BPM
+        }
+        val requiredClusterSize = if (hasStableTempo) {
+            ((intervals.size / 2) + 1).coerceAtLeast(4)
+        } else {
+            ((intervals.size / 2) + 1).coerceAtLeast(3)
+        }
+        if (clustered.size < requiredClusterSize) return null
+
+        return clustered.average().roundToInt()
+    }
+
+    private fun updateStableTempo(candidateBpm: Int) {
+        val currentStable = stableTempoBpm
+        if (currentStable != null && abs(candidateBpm - currentStable) <= TEMPO_CLUSTER_TOLERANCE_BPM) {
+            stableTempoBpm = ((currentStable * 0.82f) + (candidateBpm * 0.18f)).roundToInt()
+            pendingTempoBpm = null
+            pendingTempoCount = 0
+            return
+        }
+
+        if (pendingTempoBpm?.let { abs(candidateBpm - it) <= TEMPO_CLUSTER_TOLERANCE_BPM } == true) {
+            pendingTempoBpm = ((pendingTempoBpm ?: candidateBpm) + candidateBpm) / 2
+            pendingTempoCount += 1
+        } else {
+            pendingTempoBpm = candidateBpm
+            pendingTempoCount = 1
+        }
+
+        if (currentStable == null || pendingTempoCount >= TEMPO_CHANGE_CONFIRMATION_COUNT) {
+            stableTempoBpm = pendingTempoBpm
+            pendingTempoBpm = null
+            pendingTempoCount = 0
+        }
+    }
+}
+
+private const val MIN_TEMPO_ONSET_INTERVAL_MS = 250L
+private const val MAX_TEMPO_ONSET_INTERVAL_MS = 2_000L
+private const val TEMPO_ONSET_HISTORY_COUNT = 12
+private const val TEMPO_INTERVAL_WINDOW_COUNT = 7
+private const val TEMPO_CLUSTER_TOLERANCE_BPM = 4
+private const val TEMPO_CHANGE_CONFIRMATION_COUNT = 3
+private const val TEMPO_DETECTION_TIMEOUT_MS = 3_000L
 private const val TUNER_KEY_SAMPLE_COUNT = 28
 
 private val KeyNoteClasses = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 private val MajorScaleOffsets = listOf(0, 2, 4, 5, 7, 9, 11)
 private val MinorScaleOffsets = listOf(0, 2, 3, 5, 7, 8, 10)
+private val TunerScaleProfiles = listOf(
+    ScaleProfile(
+        displaySuffix = "",
+        offsets = MajorScaleOffsets,
+        chordQualities = listOf("", "m", "m", "", "", "m", "dim"),
+    ),
+    ScaleProfile(
+        displaySuffix = "m",
+        offsets = MinorScaleOffsets,
+        chordQualities = listOf("m", "dim", "", "m", "m", "", ""),
+    ),
+    ScaleProfile(
+        displaySuffix = " Dor",
+        offsets = listOf(0, 2, 3, 5, 7, 9, 10),
+        chordQualities = listOf("m", "m", "", "", "m", "dim", ""),
+    ),
+    ScaleProfile(
+        displaySuffix = " Mix",
+        offsets = listOf(0, 2, 4, 5, 7, 9, 10),
+        chordQualities = listOf("", "m", "dim", "", "m", "m", ""),
+    ),
+)
 
 private fun String.toNoteClass(): String? {
     val noteClass = takeWhile { it.isLetter() || it == '#' }
     return noteClass.takeIf { it in KeyNoteClasses }
 }
 
-private fun guessMusicalKey(noteClasses: List<String>): String? {
-    if (noteClasses.size < 6) return null
-
-    val counts = IntArray(KeyNoteClasses.size)
-    noteClasses.forEach { noteClass ->
-        val index = KeyNoteClasses.indexOf(noteClass)
-        if (index >= 0) counts[index] += 1
+private fun analyzeMusicalKey(noteClasses: List<String>): KeyAnalysis {
+    if (noteClasses.size < 6) {
+        return KeyAnalysis(
+            recentNotes = noteClasses.takeLast(8),
+            guessedKey = null,
+            likelyChords = emptyList(),
+        )
     }
 
-    var bestName: String? = null
-    var bestScore = Int.MIN_VALUE
+    val weightedCounts = FloatArray(KeyNoteClasses.size)
+    noteClasses.forEachIndexed { position, noteClass ->
+        val noteIndex = KeyNoteClasses.indexOf(noteClass)
+        if (noteIndex >= 0) {
+            val recencyWeight = 0.7f + (position.toFloat() / noteClasses.lastIndex.coerceAtLeast(1)) * 1.3f
+            weightedCounts[noteIndex] += recencyWeight
+        }
+    }
+
+    var bestGuess: KeyGuess? = null
     KeyNoteClasses.forEachIndexed { rootIndex, rootName ->
-        val majorScore = scaleScore(counts, rootIndex, MajorScaleOffsets)
-        if (majorScore > bestScore) {
-            bestScore = majorScore
-            bestName = rootName
-        }
-
-        val minorScore = scaleScore(counts, rootIndex, MinorScaleOffsets)
-        if (minorScore > bestScore) {
-            bestScore = minorScore
-            bestName = "${rootName}m"
+        TunerScaleProfiles.forEach { scale ->
+            val score = scaleScore(
+                counts = weightedCounts,
+                rootIndex = rootIndex,
+                scaleOffsets = scale.offsets,
+                tonalCenterIndex = noteClasses.lastOrNull()?.let { KeyNoteClasses.indexOf(it) } ?: -1,
+            )
+            if (bestGuess == null || score > bestGuess!!.score) {
+                bestGuess = KeyGuess(
+                    rootIndex = rootIndex,
+                    displayName = "$rootName${scale.displaySuffix}",
+                    scale = scale,
+                    score = score,
+                )
+            }
         }
     }
 
-    return bestName
+    val guess = bestGuess
+    return KeyAnalysis(
+        recentNotes = noteClasses.takeLast(8),
+        guessedKey = guess?.displayName,
+        likelyChords = guess?.likelyChords(weightedCounts).orEmpty(),
+    )
 }
 
 private fun scaleScore(
-    counts: IntArray,
+    counts: FloatArray,
     rootIndex: Int,
     scaleOffsets: List<Int>,
-): Int {
-    var score = 0
+    tonalCenterIndex: Int,
+): Float {
+    var score = 0f
+    val scaleNoteIndices = scaleOffsets.map { offset ->
+        (rootIndex + offset).floorMod(KeyNoteClasses.size)
+    }
     scaleOffsets.forEachIndexed { scaleDegree, offset ->
         val noteIndex = (rootIndex + offset).floorMod(KeyNoteClasses.size)
         val weight = when (scaleDegree) {
-            0 -> 4
-            4 -> 3
-            2 -> 2
-            else -> 1
+            0 -> 5f
+            4 -> 3.5f
+            2 -> 2.4f
+            6 -> 1.8f
+            else -> 1.2f
         }
         score += counts[noteIndex] * weight
     }
+    counts.forEachIndexed { noteIndex, count ->
+        if (noteIndex !in scaleNoteIndices) {
+            score -= count * 1.4f
+        }
+    }
+    if (tonalCenterIndex == rootIndex) {
+        score += 4f
+    }
     return score
+}
+
+private fun KeyGuess.likelyChords(counts: FloatArray): List<String> {
+    return scale.offsets.mapIndexed { degreeIndex, offset ->
+        val chordRootIndex = (rootIndex + offset).floorMod(KeyNoteClasses.size)
+        val thirdIndex = (chordRootIndex + if (scale.chordQualities[degreeIndex] == "") 4 else 3)
+            .floorMod(KeyNoteClasses.size)
+        val fifthIndex = (chordRootIndex + if (scale.chordQualities[degreeIndex] == "dim") 6 else 7)
+            .floorMod(KeyNoteClasses.size)
+        val rootWeight = if (degreeIndex == 0) 1.5f else 1f
+        val score = (counts[chordRootIndex] * 3.2f * rootWeight) +
+            (counts[thirdIndex] * 2f) +
+            (counts[fifthIndex] * 2f)
+        "${KeyNoteClasses[chordRootIndex]}${scale.chordQualities[degreeIndex]}" to score
+    }
+        .sortedByDescending { it.second }
+        .map { it.first }
+        .distinct()
+        .take(3)
 }
 
 private fun List<Float>.smartAverageOrNull(): Float? {
@@ -6039,6 +6403,13 @@ private fun Int.floorMod(divisor: Int): Int {
     return ((this % divisor) + divisor) % divisor
 }
 
+private fun Int.normalizedDetectedTempo(): Int {
+    var tempo = this
+    while (tempo < 70) tempo *= 2
+    while (tempo > 190) tempo /= 2
+    return tempo
+}
+
 private fun buildSpectrum(
     buffer: ShortArray,
     sampleCount: Int,
@@ -6063,10 +6434,31 @@ private fun List<Float>.peakSpectrumReading(): SpectrumPeak? {
 
     if (peakLevel < 0.015f) return null
 
+    val frequencyHz = spectrumFrequencyForIndex(peakIndex, size)
     return SpectrumPeak(
-        frequencyHz = spectrumFrequencyForIndex(peakIndex, size),
-        relativeDb = peakLevel.toRelativeDb(),
+        frequencyHz = frequencyHz,
+        level = peakLevel,
+        bandLabel = spectrumBandForFrequency(frequencyHz).label,
     )
+}
+
+private fun spectrumBands(): List<SpectrumBand> {
+    return listOf(
+        SpectrumBand(30f, 60f, "Sub bass", Color(0xFF7E8799)),
+        SpectrumBand(60f, 250f, "Bass/Kick", Color(0xFF2DD4BF)),
+        SpectrumBand(250f, 500f, "Low mids", Color(0xFF84CC16)),
+        SpectrumBand(500f, 2_000f, "Mids/Vox", Color(0xFFFACC15)),
+        SpectrumBand(2_000f, 6_000f, "Presence", Color(0xFFFB7185)),
+        SpectrumBand(6_000f, 10_000f, "Air/Hats", Color(0xFF60A5FA)),
+    )
+}
+
+private fun spectrumBandForFrequency(
+    frequencyHz: Float,
+    bands: List<SpectrumBand> = spectrumBands(),
+): SpectrumBand {
+    return bands.firstOrNull { frequencyHz >= it.startHz && frequencyHz < it.endHz }
+        ?: bands.last()
 }
 
 private fun spectrumFrequencyForIndex(
@@ -6075,16 +6467,6 @@ private fun spectrumFrequencyForIndex(
 ): Float {
     val progress = if (count <= 1) 0f else index.toFloat() / (count - 1)
     return 30f * (10_000f / 30f).pow(progress)
-}
-
-private fun Float.toRelativeDb(
-    floorDb: Float = -60f,
-): Float {
-    val level = coerceIn(0f, 1f)
-    if (level <= 0f) return floorDb
-
-    return (20f * (ln(level.toDouble()) / ln(10.0)).toFloat())
-        .coerceIn(floorDb, 0f)
 }
 
 private fun goertzelLevel(

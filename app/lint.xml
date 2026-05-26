@@ -4,8 +4,17 @@
         <ignore path="build.gradle.kts" />
     </issue>
 
+    <issue id="UnusedResources">
+        <ignore path="res/drawable-nodpi/bpm_munkz_watch_bg.png" />
+    </issue>
+
     <!-- Ignore the IconLocation for the Tile preview images -->
     <issue id="IconLocation">
+        <ignore path="res/drawable/tile_preview.png" />
+        <ignore path="res/drawable-round/tile_preview.png" />
+    </issue>
+
+    <issue id="IconDuplicatesConfig">
         <ignore path="res/drawable/tile_preview.png" />
         <ignore path="res/drawable-round/tile_preview.png" />
     </issue>

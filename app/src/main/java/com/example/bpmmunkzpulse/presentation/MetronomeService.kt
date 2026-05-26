@@ -23,6 +23,7 @@ import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.core.content.edit
 import com.example.bpmmunkzpulse.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -793,20 +794,19 @@ internal fun Context.loadSavedRhythmState(): MetronomeState {
 
 internal fun Context.saveRhythmState(state: MetronomeState) {
     val normalizedState = state.normalized()
-    getSharedPreferences(RHYTHM_PREFS, Context.MODE_PRIVATE)
-        .edit()
-        .putInt(RHYTHM_BPM_KEY, normalizedState.bpm)
-        .putInt(RHYTHM_BEATS_PER_MEASURE_KEY, normalizedState.beatsPerMeasure)
-        .putInt(RHYTHM_ACCENT_BEAT_KEY, normalizedState.accentBeat)
-        .putInt(RHYTHM_SUBDIVISION_COUNT_KEY, normalizedState.subdivisionCount)
-        .putString(RHYTHM_BEAT_ACCENT_TYPES_KEY, normalizedState.beatAccentTypes.toPersistedString())
-        .putInt(RHYTHM_ACCENT_INTENSITY_MODE_KEY, normalizedState.accentIntensityMode.persistedValue)
-        .putString(RHYTHM_ACCENT_INTENSITY_RANGES_KEY, normalizedState.accentIntensityRanges.toPersistedRangeString())
-        .putBoolean(RHYTHM_HAPTICS_ENABLED_KEY, normalizedState.hapticsEnabled)
-        .putBoolean(RHYTHM_BEEP_ENABLED_KEY, normalizedState.beepEnabled)
-        .putInt(RHYTHM_PLAYLIST_INDEX_KEY, normalizedState.playlistIndex)
-        .putInt(RHYTHM_SONG_INDEX_KEY, normalizedState.songIndex)
-        .apply()
+    getSharedPreferences(RHYTHM_PREFS, Context.MODE_PRIVATE).edit {
+        putInt(RHYTHM_BPM_KEY, normalizedState.bpm)
+        putInt(RHYTHM_BEATS_PER_MEASURE_KEY, normalizedState.beatsPerMeasure)
+        putInt(RHYTHM_ACCENT_BEAT_KEY, normalizedState.accentBeat)
+        putInt(RHYTHM_SUBDIVISION_COUNT_KEY, normalizedState.subdivisionCount)
+        putString(RHYTHM_BEAT_ACCENT_TYPES_KEY, normalizedState.beatAccentTypes.toPersistedString())
+        putInt(RHYTHM_ACCENT_INTENSITY_MODE_KEY, normalizedState.accentIntensityMode.persistedValue)
+        putString(RHYTHM_ACCENT_INTENSITY_RANGES_KEY, normalizedState.accentIntensityRanges.toPersistedRangeString())
+        putBoolean(RHYTHM_HAPTICS_ENABLED_KEY, normalizedState.hapticsEnabled)
+        putBoolean(RHYTHM_BEEP_ENABLED_KEY, normalizedState.beepEnabled)
+        putInt(RHYTHM_PLAYLIST_INDEX_KEY, normalizedState.playlistIndex)
+        putInt(RHYTHM_SONG_INDEX_KEY, normalizedState.songIndex)
+    }
 }
 
 @SuppressLint("WakelockTimeout")

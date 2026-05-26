@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">BPM Munkz Pulse Free</string>
     <string name="tile_label">Pulso</string>
-    <string name="tile_description">Acceso rapido para BPM Munkz Pulse.</string>
+    <string name="tile_description">Acceso rápido para BPM Munkz Pulse.</string>
     <string name="tile_open">Abrir</string>
 </resources>
