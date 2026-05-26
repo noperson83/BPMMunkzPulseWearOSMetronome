@@ -1154,6 +1154,7 @@ fun BeatPulseScreen() {
                 isRunning = false,
                 beatFlash = false,
                 flashingBeat = 0,
+                currentBeatIndex = 1,
                 currentSubdivisionIndex = 1,
                 playbackStartedAtMs = 0L,
             )
@@ -1164,6 +1165,7 @@ fun BeatPulseScreen() {
                 isRunning = true,
                 beatFlash = false,
                 flashingBeat = 0,
+                currentBeatIndex = 1,
                 currentSubdivisionIndex = 1,
                 beatClockStartedAtMs = now,
                 playbackStartedAtMs = now,
@@ -1328,6 +1330,12 @@ fun BeatPulseScreen() {
                         onToggleRunning = toggleRunning,
                         onBpmClick = {
                             tapTempoPopupOpen = true
+                        },
+                        onOpenTuner = {
+                            tunerOverlayOpen = true
+                        },
+                        onOpenSpectrum = {
+                            spectrumOverlayOpen = true
                         },
                     )
 
@@ -1926,6 +1934,8 @@ private fun RhythmSetupPage(
     onEditRhythm: () -> Unit,
     onToggleRunning: () -> Unit,
     onBpmClick: () -> Unit,
+    onOpenTuner: () -> Unit,
+    onOpenSpectrum: () -> Unit,
 ) {
     val beatVisualState = rememberRhythmBeatVisualState(
         isRunning = isRunning,
@@ -1960,6 +1970,8 @@ private fun RhythmSetupPage(
             onBpmClick = onBpmClick,
             onEdit = onEditRhythm,
             onToggleRunning = onToggleRunning,
+            onOpenTuner = onOpenTuner,
+            onOpenSpectrum = onOpenSpectrum,
         )
     }
 }
@@ -1980,6 +1992,8 @@ private fun RhythmLiveCanvas(
     onBpmClick: () -> Unit,
     onEdit: () -> Unit,
     onToggleRunning: () -> Unit,
+    onOpenTuner: () -> Unit,
+    onOpenSpectrum: () -> Unit,
 ) {
     BigPulseCircleSelector(
         beatsPerMeasure = beatsPerMeasure,
@@ -1987,6 +2001,7 @@ private fun RhythmLiveCanvas(
         currentBeatIndex = currentBeatIndex,
         beatFlash = beatFlash,
         modifier = modifier,
+        centerContentWidth = 192.dp,
         onBeatAccentTypeCycle = null,
         bottomContent = {
             RhythmElapsedTimer(
@@ -1995,69 +2010,96 @@ private fun RhythmLiveCanvas(
             )
         },
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
+        Box(
+            modifier = Modifier.width(192.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = "$bpm",
-                modifier = Modifier.clickable(onClick = onBpmClick),
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-            )
-
-            Spacer(modifier = Modifier.height(2.dp))
-
-            Row(
-                modifier = Modifier.width(80.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "$currentBeatIndex/$beatsPerMeasure",
-                    modifier = Modifier.width(68.dp),
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    textAlign = TextAlign.Center,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            SubdivisionDots(
-                subdivisionCount = subdivisionCount,
-                currentSubdivisionIndex = currentSubdivisionIndex,
-                activeSize = 20.dp,
-                inactiveSize = 10.dp,
-                spacing = 5.dp,
-            )
-
-            Spacer(modifier = Modifier.height(18.dp))
-
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                GlassCommandButton(
-                    text = if (isRunning) appText.stopUpper else appText.startUpper,
-                    modifier = Modifier
-                        .width(104.dp)
-                        .height(30.dp),
-                    fontSize = 15.sp,
-                    selected = isRunning,
-                    prominent = true,
-                    onClick = onToggleRunning,
+                Text(
+                    text = "$bpm",
+                    modifier = Modifier.clickable(onClick = onBpmClick),
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
                 )
 
-                GlassCommandButton(
-                    text = appText.edit,
-                    modifier = Modifier
-                        .width(42.dp)
-                        .height(24.dp),
-                    fontSize = 9.sp,
-                    onClick = onEdit,
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.width(150.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GlassCommandButton(
+                        text = appText.tuner,
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(21.dp),
+                        fontSize = 8.sp,
+                        selected = false,
+                        prominent = false,
+                        onClick = onOpenTuner,
+                    )
+
+                    Text(
+                        text = "$currentBeatIndex/$beatsPerMeasure",
+                        modifier = Modifier.width(68.dp),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center,
+                    )
+
+                    GlassCommandButton(
+                        text = "Spect",
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(21.dp),
+                        fontSize = 8.sp,
+                        selected = false,
+                        prominent = false,
+                        onClick = onOpenSpectrum,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                SubdivisionDots(
+                    subdivisionCount = subdivisionCount,
+                    currentSubdivisionIndex = currentSubdivisionIndex,
+                    activeSize = 18.dp,
+                    inactiveSize = 10.dp,
+                    spacing = 3.dp,
                 )
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    GlassCommandButton(
+                        text = if (isRunning) appText.stopUpper else appText.startUpper,
+                        modifier = Modifier
+                            .width(104.dp)
+                            .height(30.dp),
+                        fontSize = 15.sp,
+                        selected = isRunning,
+                        prominent = true,
+                        onClick = onToggleRunning,
+                    )
+
+                    GlassCommandButton(
+                        text = appText.edit,
+                        modifier = Modifier
+                            .width(42.dp)
+                            .height(24.dp),
+                        fontSize = 9.sp,
+                        onClick = onEdit,
+                    )
+                }
             }
         }
     }
@@ -2398,6 +2440,7 @@ private fun BigPulseCircleSelector(
     currentBeatIndex: Int,
     beatFlash: Boolean,
     modifier: Modifier = Modifier,
+    centerContentWidth: Dp = 128.dp,
     onBeatAccentTypeCycle: ((Int) -> Unit)?,
     bottomContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
@@ -2432,7 +2475,7 @@ private fun BigPulseCircleSelector(
         }
 
         Column(
-            modifier = Modifier.width(128.dp),
+            modifier = Modifier.width(centerContentWidth),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
@@ -2734,7 +2777,11 @@ private fun rememberRhythmBeatVisualState(
                 subdivisionCount = subdivisionCount,
                 beatClockStartedAtMs = beatClockStartedAtMs,
             )
-            if (nextBeatVisualState.beatFlash) {
+            if (nextBeatVisualState.beatFlash && isRhythmVisualTraceWindow(
+                    bpm = bpm,
+                    beatClockStartedAtMs = beatClockStartedAtMs,
+                )
+            ) {
                 BeatTimingTrace.mark("rhythm visual loop")
             }
             beatVisualState = nextBeatVisualState
@@ -2772,6 +2819,17 @@ private fun currentRhythmBeatVisualState(
             .coerceIn(1, normalizedSubdivisionCount),
         beatFlash = beatElapsedMs < BEAT_FLASH_DURATION_MS,
     )
+}
+
+private fun isRhythmVisualTraceWindow(
+    bpm: Int,
+    beatClockStartedAtMs: Long,
+): Boolean {
+    val normalizedBpm = bpm.coerceIn(MIN_BPM, MAX_BPM)
+    val intervalMs = (60_000L / normalizedBpm).coerceAtLeast(1L)
+    val elapsedMs = (SystemClock.elapsedRealtime() - beatClockStartedAtMs).coerceAtLeast(0L)
+    val beatElapsedMs = elapsedMs % intervalMs
+    return beatElapsedMs < BEAT_FLASH_DURATION_MS
 }
 
 private fun rhythmVisualDelayMs(
@@ -2908,20 +2966,29 @@ private fun PlaylistClockPage(
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 48.dp)
-                .width(164.dp)
-                .height(24.dp),
+                .padding(top = 46.dp)
+                .width(184.dp)
+                .height(26.dp),
         ) {
-            Text(
-                text = "${song.bpm}",
-                modifier = Modifier.align(Alignment.CenterStart),
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .width(58.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = song.musicalKey,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+            }
 
             Text(
-                text = song.musicalKey,
+                text = "${song.bpm}",
                 modifier = Modifier.align(Alignment.CenterEnd),
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
@@ -2937,7 +3004,7 @@ private fun PlaylistClockPage(
             clockColorArgb = clockColorArgb,
             modifier = Modifier
                 .align(Alignment.Center)
-                .padding(top = 14.dp)
+                .padding(top = 10.dp)
                 .size(124.dp),
         )
 
@@ -2945,7 +3012,6 @@ private fun PlaylistClockPage(
             isNext = false,
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .padding(top = 14.dp)
                 .padding(start = 0.dp),
             onClick = onPreviousSong,
         )
@@ -2954,7 +3020,6 @@ private fun PlaylistClockPage(
             isNext = true,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .padding(top = 14.dp)
                 .padding(end = 0.dp),
             onClick = onNextSong,
         )
@@ -4345,11 +4410,11 @@ private fun AudioToolButtons(
         )
 
         GlassCommandButton(
-            text = "EQ",
+            text = "Spect",
             modifier = Modifier
                 .width(50.dp)
                 .height(22.dp),
-            fontSize = 10.sp,
+            fontSize = 8.sp,
             selected = false,
             prominent = false,
             onClick = onOpenSpectrum,
@@ -4410,6 +4475,8 @@ private fun TunerPage(
     onSaveKey: (String) -> Unit,
     onRequestMicPermission: () -> Unit,
 ) {
+    val guessedKey = audioAnalysisState.guessedKey
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -4506,31 +4573,45 @@ private fun TunerPage(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "${appText.keyGuess}: ${audioAnalysisState.guessedKey ?: "--"}",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    textAlign = TextAlign.Center,
-                )
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 4.dp, top = 36.dp)
+                .width(42.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "${appText.keyGuess}:",
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
 
-                val guessedKey = audioAnalysisState.guessedKey
-                if (guessedKey != null) {
-                    SmallCommandButton(
-                        text = appText.saveKey,
-                        modifier = Modifier
-                            .width(54.dp)
-                            .height(21.dp),
-                        fontSize = 8.sp,
-                        onClick = { onSaveKey(guessedKey) },
-                    )
-                }
-            }
+            Text(
+                text = guessedKey ?: "--",
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+        }
+
+        if (guessedKey != null) {
+            SmallCommandButton(
+                text = appText.saveKey,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 4.dp)
+                    .width(62.dp)
+                    .height(22.dp),
+                fontSize = 8.sp,
+                onClick = { onSaveKey(guessedKey) },
+            )
         }
     }
 }

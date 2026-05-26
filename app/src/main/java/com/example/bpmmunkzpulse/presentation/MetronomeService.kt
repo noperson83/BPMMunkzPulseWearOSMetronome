@@ -209,8 +209,8 @@ class MetronomeService : Service() {
                 isRunning = true,
                 beatFlash = false,
                 flashingBeat = 0,
-                currentBeatIndex = config.currentBeatIndex.coerceIn(1, config.beatsPerMeasure),
-                currentSubdivisionIndex = config.currentSubdivisionIndex.coerceIn(1, config.subdivisionCount),
+                currentBeatIndex = 1,
+                currentSubdivisionIndex = 1,
                 beatClockStartedAtMs = now,
                 playbackStartedAtMs = now,
             )
@@ -229,6 +229,7 @@ class MetronomeService : Service() {
                 isRunning = false,
                 beatFlash = false,
                 flashingBeat = 0,
+                currentBeatIndex = 1,
                 currentSubdivisionIndex = 1,
                 playbackStartedAtMs = 0L,
             )
@@ -419,6 +420,9 @@ class MetronomeService : Service() {
         metronomeJob = serviceScope.launch {
             var beat = mutableState.value.currentBeatIndex.coerceIn(1, mutableState.value.beatsPerMeasure)
             var nextBeatStartedAtMs = SystemClock.elapsedRealtime()
+            mutableState.update {
+                it.copy(beatClockStartedAtMs = nextBeatStartedAtMs)
+            }
 
             while (isActive && mutableState.value.isRunning) {
                 delayUntilElapsedRealtime(nextBeatStartedAtMs)
