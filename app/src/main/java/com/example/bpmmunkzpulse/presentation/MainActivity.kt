@@ -3,7 +3,7 @@ package com.example.bpmmunkzpulse.presentation
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.app.WallpaperManager
+import android.graphics.Paint
 import android.content.ComponentName
 import android.content.Context
 import android.content.ContextWrapper
@@ -18,8 +18,8 @@ import android.os.IBinder
 import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
+import android.util.Log
 import android.view.WindowManager
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -33,11 +33,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -51,13 +49,17 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -73,8 +75,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -90,8 +95,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.edit
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.AppScaffold
@@ -102,13 +107,12 @@ import androidx.wear.compose.ui.tooling.preview.WearPreviewDevices
 import androidx.wear.compose.ui.tooling.preview.WearPreviewFontScales
 import com.example.bpmmunkzpulse.R
 import com.example.bpmmunkzpulse.presentation.theme.BPMMunkzPulseTheme
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -122,7 +126,6 @@ import kotlin.math.sqrt
 internal const val MIN_BPM = 30
 internal const val MAX_BPM = 240
 internal const val BEAT_FLASH_DURATION_MS = 80L
-internal const val BEEP_LEAD_MS = 55L
 internal const val BEEP_DURATION_MS = 70
 private const val APP_LAUNCH_SPLASH_DURATION_MS = 740L
 private const val TAP_TEMPO_RESET_TIMEOUT_MS = 2_000L
@@ -134,13 +137,18 @@ private const val TAP_TEMPO_FREE_PAGE_INDEX = 3
 private const val PULSE_PAGE_COUNT = 4
 private const val AUDIO_SAMPLE_RATE = 44_100
 private const val AUDIO_FRAME_SIZE = 2_048
-private const val SPECTRUM_BAR_COUNT = 36
-private const val BAROQUE_REFERENCE_A4_HZ = 415f
+private const val SPECTRUM_BAR_COUNT = 28
+private const val AUDIO_ANALYSIS_INTERVAL_MS = 120L
+private const val RHYTHM_VISUAL_MAX_DELAY_MS = 24L
+private const val RHYTHM_VISUAL_WAKE_AHEAD_MS = 6L
+private const val DEFAULT_A4_REFERENCE_HZ = 440
+private const val MIN_A4_REFERENCE_HZ = 400
+private const val MAX_A4_REFERENCE_HZ = 480
 private const val TUNER_AVERAGE_SAMPLE_COUNT = 7
-@Suppress("SpellCheckingInspection")
-private const val WATCH_FACE_PACKAGE = "com.example.bpmmunkzface"
 private const val SETTINGS_PREFS = "bpm_munkz_settings"
 private const val KEEP_SCREEN_AWAKE_WHILE_PLAYING_KEY = "keep_screen_awake_while_playing"
+private const val KEEP_SCREEN_MODE_KEY = "keep_screen_mode"
+private const val SETTINGS_A4_REFERENCE_HZ_KEY = "a4_reference_hz"
 private const val SETTINGS_MAIN_COLOR_KEY = "main_color"
 private const val SETTINGS_BACKGROUND_COLOR_KEY = "background_color"
 private const val SETTINGS_CLOCK_COLOR_KEY = "clock_color"
@@ -150,11 +158,58 @@ private const val SETTINGS_RING_MODE_KEY = "ring_mode"
 private const val SETTINGS_LANGUAGE_INDEX_KEY = "language_index"
 private const val PLAYLIST_PREFS = "bpm_munkz_playlists"
 private const val PLAYLIST_LIBRARY_KEY = "playlist_library"
-private val NEON_GREEN_COLOR = 0xFF9DFF00.toInt()
-private val DEFAULT_MAIN_COLOR = NEON_GREEN_COLOR
-private val DEFAULT_BACKGROUND_COLOR = 0xFF001F24.toInt()
-private val DEFAULT_CLOCK_COLOR = NEON_GREEN_COLOR
-private val DEFAULT_BIG_PULSE_RING_COLOR = NEON_GREEN_COLOR
+
+internal object BeatTimingTrace {
+    private const val TAG = "BPM_TIMING"
+
+    private data class TimingEvent(
+        val label: String,
+        val deltaMs: Long,
+    )
+
+    private var beatId = 0L
+    private var beatStartedAtMs = 0L
+    private var events = mutableListOf<TimingEvent>()
+
+    @Synchronized
+    fun startBeat(
+        beat: Int,
+        bpm: Int,
+        accentType: BeatAccentType,
+    ) {
+        beatId += 1L
+        beatStartedAtMs = SystemClock.elapsedRealtime()
+        events = mutableListOf(
+            TimingEvent("beat tick b$beat ${accentType.name} @${bpm}bpm", 0L),
+        )
+        Log.d(TAG, "beat#$beatId high->low: ${formatEvents()}")
+    }
+
+    @Synchronized
+    fun mark(label: String) {
+        if (beatStartedAtMs <= 0L) return
+        if (events.any { it.label == label }) return
+
+        events += TimingEvent(
+            label = label,
+            deltaMs = SystemClock.elapsedRealtime() - beatStartedAtMs,
+        )
+        Log.d(TAG, "beat#$beatId high->low: ${formatEvents()}")
+    }
+
+    private fun formatEvents(): String {
+        return events
+            .sortedByDescending { it.deltaMs }
+            .joinToString(separator = " | ") { event ->
+                "${event.label}=+${event.deltaMs}ms"
+            }
+    }
+}
+private const val NEON_GREEN_COLOR = -6422784
+private const val DEFAULT_MAIN_COLOR = NEON_GREEN_COLOR
+private const val DEFAULT_BACKGROUND_COLOR = -16769244
+private const val DEFAULT_CLOCK_COLOR = NEON_GREEN_COLOR
+private const val DEFAULT_BIG_PULSE_RING_COLOR = NEON_GREEN_COLOR
 private val DEFAULT_BIG_RING_FLASH_MODE = BigRingFlashMode.Big
 private const val DEFAULT_CLOCK_IMAGE_INDEX = 6
 private const val DEFAULT_LANGUAGE_INDEX = 0
@@ -257,6 +312,7 @@ private data class PlaylistSong(
     val accentBeat: Int,
     val subdivisionCount: Int,
     val beatAccentTypes: List<BeatAccentType>,
+    val accentIntensityMode: AccentIntensityMode,
     val musicalKey: String,
     val note: String,
 )
@@ -277,10 +333,21 @@ private data class BigRingModeChoice(
     val spanishLabel: String = label,
 )
 
+private data class AccentIntensityChoice(
+    val mode: AccentIntensityMode,
+    val label: String,
+    val spanishLabel: String = label,
+)
+
 private data class BeatVisualState(
     val currentBeatIndex: Int,
     val currentSubdivisionIndex: Int,
     val beatFlash: Boolean,
+)
+
+private data class BigRingVisualState(
+    val beatFlash: Boolean = false,
+    val flashingAccentType: BeatAccentType = BeatAccentType.Silent,
 )
 
 private data class AudioAnalysisState(
@@ -291,6 +358,11 @@ private data class AudioAnalysisState(
     val recentNotes: List<String> = emptyList(),
     val guessedKey: String? = null,
     val spectrum: List<Float> = List(SPECTRUM_BAR_COUNT) { 0f },
+)
+
+private data class SpectrumPeak(
+    val frequencyHz: Float,
+    val relativeDb: Float,
 )
 
 private enum class TunerListenProfile(
@@ -327,6 +399,18 @@ private enum class RhythmChoicePicker {
     Subdivision,
 }
 
+private enum class KeepScreenMode(val persistedValue: Int) {
+    AppOpen(0),
+    Playing(1),
+    WatchTimeout(2);
+
+    companion object {
+        fun fromPersistedValue(value: Int): KeepScreenMode {
+            return entries.firstOrNull { it.persistedValue == value } ?: Playing
+        }
+    }
+}
+
 private data class AppText(
     val tap: String,
     val start: String,
@@ -350,9 +434,14 @@ private data class AppText(
     val bigPulse: String,
     val haptics: String,
     val beep: String,
+    val intensity: String,
+    val a4Reference: String,
     val diagnostics: String,
     val appCpu: String,
-    val keepScreenAwakeWhilePlaying: String,
+    val keepScreenOn: String,
+    val keepScreenAppOpen: String,
+    val keepScreenPlaying: String,
+    val keepScreenWatchTimeout: String,
     val on: String,
     val off: String,
     val theme: String,
@@ -375,15 +464,6 @@ private data class AppText(
     val key: String,
     val note: String,
     val done: String,
-    val pulsePro: String,
-    val fullAppIncludes: String,
-    val customSettings: String,
-    val savedTempoPlaylists: String,
-    val secondsToBeatsClock: String,
-    val moreBeatSounds: String,
-    val watchFace: String,
-    val buyNow: String,
-    val useFace: String,
     val decreaseBpmBy5: String,
     val increaseBpmBy5: String,
 )
@@ -409,6 +489,13 @@ private val BigRingModeChoices = listOf(
     BigRingModeChoice(BigRingFlashMode.Off, "Off", "Off"),
 )
 
+private val AccentIntensityChoices = listOf(
+    AccentIntensityChoice(AccentIntensityMode.Big, "Big", "Gran"),
+    AccentIntensityChoice(AccentIntensityMode.Medium, "Mid", "Med"),
+    AccentIntensityChoice(AccentIntensityMode.Little, "Lil", "Peq"),
+    AccentIntensityChoice(AccentIntensityMode.Silent, "Sil", "Sil"),
+)
+
 private val AppLanguages = listOf(
     AppLanguage.English,
     AppLanguage.Spanish,
@@ -422,6 +509,13 @@ private fun ClockImageChoice.labelFor(language: AppLanguage): String {
 }
 
 private fun BigRingModeChoice.labelFor(language: AppLanguage): String {
+    return when (language) {
+        AppLanguage.English -> label
+        AppLanguage.Spanish -> spanishLabel
+    }
+}
+
+private fun AccentIntensityChoice.labelFor(language: AppLanguage): String {
     return when (language) {
         AppLanguage.English -> label
         AppLanguage.Spanish -> spanishLabel
@@ -473,9 +567,14 @@ private fun appTextFor(language: AppLanguage): AppText {
             bigPulse = "Big pulse",
             haptics = "Vibration",
             beep = "Beep",
+            intensity = "Intensity",
+            a4Reference = "A4 Ref",
             diagnostics = "Diagnostics",
             appCpu = "App CPU",
-            keepScreenAwakeWhilePlaying = "Keep screen awake while playing",
+            keepScreenOn = "Keep screen on",
+            keepScreenAppOpen = "App Open",
+            keepScreenPlaying = "Playing",
+            keepScreenWatchTimeout = "Timeout",
             on = "On",
             off = "Off",
             theme = "Theme",
@@ -498,15 +597,6 @@ private fun appTextFor(language: AppLanguage): AppText {
             key = "Key",
             note = "Note",
             done = "Done",
-            pulsePro = "Pulse Pro",
-            fullAppIncludes = "Full app includes",
-            customSettings = "Custom Settings",
-            savedTempoPlaylists = "Saved Tempo Playlists",
-            secondsToBeatsClock = "Seconds to Beats Clock",
-            moreBeatSounds = "More beat sounds",
-            watchFace = "BPM Munkz watch face",
-            buyNow = "Buy Now",
-            useFace = "Use Face",
             decreaseBpmBy5 = "Decrease BPM by 5",
             increaseBpmBy5 = "Increase BPM by 5",
         )
@@ -534,9 +624,14 @@ private fun appTextFor(language: AppLanguage): AppText {
             bigPulse = "Pulso grande",
             haptics = "Vibracion",
             beep = "Pitido",
+            intensity = "Intensidad",
+            a4Reference = "Ref A4",
             diagnostics = "Diagnostico",
             appCpu = "CPU app",
-            keepScreenAwakeWhilePlaying = "Pantalla activa al tocar",
+            keepScreenOn = "Pantalla activa",
+            keepScreenAppOpen = "App abierta",
+            keepScreenPlaying = "Tocando",
+            keepScreenWatchTimeout = "Normal",
             on = "Si",
             off = "No",
             theme = "Tema",
@@ -559,15 +654,6 @@ private fun appTextFor(language: AppLanguage): AppText {
             key = "Tono",
             note = "Nota",
             done = "Listo",
-            pulsePro = "Pulse Pro",
-            fullAppIncludes = "App completa",
-            customSettings = "Ajustes propios",
-            savedTempoPlaylists = "Listas guardadas",
-            secondsToBeatsClock = "Reloj beats/seg",
-            moreBeatSounds = "Mas sonidos",
-            watchFace = "Face BPM Munkz",
-            buyNow = "Comprar",
-            useFace = "Usar Face",
             decreaseBpmBy5 = "Bajar BPM por 5",
             increaseBpmBy5 = "Subir BPM por 5",
         )
@@ -663,10 +749,23 @@ fun BeatPulseScreen() {
     val beatAccentTypes = metronomeState.beatAccentTypes
     val currentBeatIndex = metronomeState.currentBeatIndex
     val currentSubdivisionIndex = metronomeState.currentSubdivisionIndex
+    val accentIntensityMode = metronomeState.accentIntensityMode
     val hapticsEnabled = metronomeState.hapticsEnabled
     val beepEnabled = metronomeState.beepEnabled
-    var keepScreenAwakeWhilePlaying by rememberSaveable {
-        mutableStateOf(!isPreview && context.loadKeepScreenAwakeWhilePlaying())
+    var keepScreenMode by rememberSaveable {
+        mutableStateOf(if (isPreview) KeepScreenMode.WatchTimeout else context.loadKeepScreenMode())
+    }
+    var a4ReferenceHz by rememberSaveable {
+        mutableIntStateOf(
+            if (isPreview) {
+                DEFAULT_A4_REFERENCE_HZ
+            } else {
+                context.loadSettingsInt(
+                    SETTINGS_A4_REFERENCE_HZ_KEY,
+                    DEFAULT_A4_REFERENCE_HZ,
+                )
+            }.coerceIn(MIN_A4_REFERENCE_HZ, MAX_A4_REFERENCE_HZ),
+        )
     }
     var mainColorArgb by rememberSaveable {
         mutableIntStateOf(
@@ -783,6 +882,8 @@ fun BeatPulseScreen() {
     val audioAnalysisState = rememberAudioAnalysisState(
         enabled = micPermissionGranted && audioOverlayOpen && !isPreview,
         listenProfile = tunerListenProfile,
+        a4ReferenceHz = a4ReferenceHz,
+        includeSpectrum = spectrumOverlayOpen,
     )
     val clockImageResId = if (isPreview) {
         R.drawable.clock_dial_all_colors
@@ -973,6 +1074,7 @@ fun BeatPulseScreen() {
             accentBeat = song.accentBeat,
             subdivisionCount = song.subdivisionCount,
             beatAccentTypes = song.beatAccentTypes,
+            accentIntensityMode = song.accentIntensityMode,
             restartBeat = restartBeat,
         )
     }
@@ -1009,6 +1111,7 @@ fun BeatPulseScreen() {
                 accentBeat = rhythmState.accentBeat,
                 subdivisionCount = rhythmState.subdivisionCount,
                 beatAccentTypes = rhythmState.beatAccentTypes,
+                accentIntensityMode = rhythmState.accentIntensityMode,
             )
         }
         playlists = nextPlaylists
@@ -1033,28 +1136,6 @@ fun BeatPulseScreen() {
     fun saveRhythmEditorAndClose() {
         saveCurrentRhythmToSong()
         rhythmEditorPopupOpen = false
-    }
-
-    fun addSongWithCurrentRhythm() {
-        val nextSongIndex = currentPlaylist.songs.size
-        val nextSong = defaultPlaylistSong(nextSongIndex + 1).copy(
-            bpm = bpm,
-            beatsPerMeasure = beatsPerMeasure,
-            accentBeat = accentBeat,
-            subdivisionCount = subdivisionCount,
-            beatAccentTypes = beatAccentTypes,
-        )
-        val nextPlaylists = playlists.updatePlaylist(playlistIndex) { playlist ->
-            playlist.copy(songs = playlist.songs + nextSong)
-        }
-        playlists = nextPlaylists
-        selectedSongIndexState.intValue = nextSongIndex
-        applySongToMetronome(
-            nextPlaylistIndex = playlistIndex,
-            nextSongIndex = nextSongIndex,
-            song = nextSong,
-            restartBeat = isRunning,
-        )
     }
 
     val toggleRunning = {
@@ -1146,9 +1227,9 @@ fun BeatPulseScreen() {
         }
     }
 
-    LaunchedEffect(keepScreenAwakeWhilePlaying, isPreview) {
+    LaunchedEffect(keepScreenMode, isPreview) {
         if (!isPreview) {
-            context.saveKeepScreenAwakeWhilePlaying(keepScreenAwakeWhilePlaying)
+            context.saveKeepScreenMode(keepScreenMode)
         }
     }
 
@@ -1159,6 +1240,7 @@ fun BeatPulseScreen() {
         currentSong.accentBeat,
         currentSong.subdivisionCount,
         currentSong.beatAccentTypes,
+        currentSong.accentIntensityMode,
         playlistIndex,
         songIndex,
     ) {
@@ -1167,11 +1249,16 @@ fun BeatPulseScreen() {
         }
     }
 
-    LaunchedEffect(isRunning, keepScreenAwakeWhilePlaying, activity, isPreview) {
+    LaunchedEffect(isRunning, keepScreenMode, activity, isPreview) {
         if (isPreview) return@LaunchedEffect
 
         val keepScreenOnFlag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        if (isRunning && keepScreenAwakeWhilePlaying) {
+        val shouldKeepScreenOn = when (keepScreenMode) {
+            KeepScreenMode.AppOpen -> true
+            KeepScreenMode.Playing -> isRunning
+            KeepScreenMode.WatchTimeout -> false
+        }
+        if (shouldKeepScreenOn) {
             activity?.window?.addFlags(keepScreenOnFlag)
         } else {
             activity?.window?.clearFlags(keepScreenOnFlag)
@@ -1190,17 +1277,6 @@ fun BeatPulseScreen() {
                 .fillMaxSize()
                 .background(backgroundColor),
         ) {
-            if (bigRingFlashMode.shouldFlashRing(
-                    beatFlash = beatFlash,
-                    flashingAccentType = beatAccentTypes.typeForBeat(flashingBeat),
-                )
-            ) {
-                BigPulseRing(
-                    colorArgb = bigPulseRingColorArgb,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxSize(),
@@ -1212,6 +1288,7 @@ fun BeatPulseScreen() {
                         songIndex = songIndex,
                         isRunning = isRunning,
                         beatClockStartedAtMs = beatClockStartedAtMs,
+                        playbackStartedAtMs = playbackStartedAtMs,
                         clockImageResId = clockImageResId,
                         clockColorArgb = clockColorArgb,
                         onPreviousSong = { selectSong(songIndex - 1) },
@@ -1249,7 +1326,10 @@ fun BeatPulseScreen() {
                     appText = appText,
                     hapticsEnabled = hapticsEnabled,
                     beepEnabled = beepEnabled,
-                    keepScreenAwakeWhilePlaying = keepScreenAwakeWhilePlaying,
+                    accentIntensityMode = accentIntensityMode,
+                    accentIntensityRanges = metronomeState.accentIntensityRanges,
+                    a4ReferenceHz = a4ReferenceHz,
+                    keepScreenMode = keepScreenMode,
                     mainColorArgb = mainColorArgb,
                     backgroundColorArgb = backgroundColorArgb,
                     clockColorArgb = clockColorArgb,
@@ -1276,8 +1356,36 @@ fun BeatPulseScreen() {
                         }
                         metronomeService?.setBeepEnabled(nextBeepEnabled)
                     },
-                    onKeepScreenAwakeWhilePlayingToggle = {
-                        keepScreenAwakeWhilePlaying = !keepScreenAwakeWhilePlaying
+                    onAccentIntensityModeChoice = { mode ->
+                        val nextState = metronomeState.copy(accentIntensityMode = mode)
+                        val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
+                            song.copy(accentIntensityMode = mode)
+                        }
+                        metronomeState = nextState
+                        playlists = nextPlaylists
+                        if (!isPreview) {
+                            context.saveRhythmState(nextState)
+                            context.saveSavedPlaylists(nextPlaylists)
+                        }
+                        metronomeService?.setAccentIntensityMode(mode)
+                    },
+                    onAccentIntensityRangesChange = { ranges ->
+                        val nextState = metronomeState.copy(accentIntensityRanges = ranges)
+                        metronomeState = nextState
+                        if (!isPreview) {
+                            context.saveRhythmState(nextState)
+                        }
+                        metronomeService?.setAccentIntensityRanges(ranges)
+                    },
+                    onA4ReferenceHzChange = { referenceHz ->
+                        val nextReferenceHz = referenceHz.coerceIn(MIN_A4_REFERENCE_HZ, MAX_A4_REFERENCE_HZ)
+                        a4ReferenceHz = nextReferenceHz
+                        if (!isPreview) {
+                            context.saveSettingsInt(SETTINGS_A4_REFERENCE_HZ_KEY, nextReferenceHz)
+                        }
+                    },
+                    onKeepScreenModeChoice = { mode ->
+                        keepScreenMode = mode
                     },
                     onMainColorChoice = { colorArgb ->
                         val nextColorArgb = safeMainColorArgb(
@@ -1351,6 +1459,14 @@ fun BeatPulseScreen() {
                 }
             }
 
+            BigPulseRingOverlay(
+                beatFlash = beatFlash,
+                flashingAccentType = beatAccentTypes.typeForBeat(flashingBeat),
+                bigRingFlashMode = bigRingFlashMode,
+                colorArgb = bigPulseRingColorArgb,
+                modifier = Modifier.fillMaxSize(),
+            )
+
             CpuPercentOverlay(
                 cpuUsagePercent = appCpuUsagePercent,
                 modifier = Modifier.align(Alignment.TopStart),
@@ -1394,6 +1510,7 @@ fun BeatPulseScreen() {
                     SpectrumAnalyzerPage(
                         appText = appText,
                         audioAnalysisState = audioAnalysisState,
+                        a4ReferenceHz = a4ReferenceHz,
                         micPermissionGranted = micPermissionGranted,
                         onRequestMicPermission = {
                             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -1482,6 +1599,7 @@ fun BeatPulseScreen() {
                             accentBeat = currentSong.accentBeat,
                             subdivisionCount = currentSong.subdivisionCount,
                             beatAccentTypes = currentSong.beatAccentTypes,
+                            accentIntensityMode = currentSong.accentIntensityMode,
                             restartBeat = isRunning,
                         )
                     },
@@ -1573,6 +1691,14 @@ fun BeatPulseScreen() {
                     beatFlash = beatFlash,
                     isAccentFlash = flashingBeat == accentBeat,
                     isRunning = isRunning,
+                    onOpenTuner = {
+                        tapTempoPopupOpen = false
+                        tunerOverlayOpen = true
+                    },
+                    onOpenSpectrum = {
+                        tapTempoPopupOpen = false
+                        spectrumOverlayOpen = true
+                    },
                     onTapTempo = recordTapTempo,
                     onDecrease = decreaseBpm,
                     onDecreaseLarge = decreaseBpmLarge,
@@ -1649,6 +1775,11 @@ private fun TapTempoControls(
     onDecreaseLarge: () -> Unit,
     onIncrease: () -> Unit,
     onIncreaseLarge: () -> Unit,
+    readoutOffsetY: Dp = 0.dp,
+    readoutBottomSpacing: Dp = 8.dp,
+    adjustRowOffsetY: Dp = 0.dp,
+    footerTopSpacing: Dp = 6.dp,
+    header: @Composable () -> Unit = {},
     footer: @Composable () -> Unit,
 ) {
     BeatPulsePage {
@@ -1656,11 +1787,15 @@ private fun TapTempoControls(
             bpm = bpm,
             beatFlash = beatFlash,
             isAccentFlash = isAccentFlash,
+            modifier = Modifier.offset(y = readoutOffsetY),
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(readoutBottomSpacing))
+
+        header()
 
         Row(
+            modifier = Modifier.offset(y = adjustRowOffsetY),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1684,7 +1819,7 @@ private fun TapTempoControls(
             )
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(footerTopSpacing))
 
         footer()
     }
@@ -1697,6 +1832,8 @@ private fun TapTempoPopup(
     beatFlash: Boolean,
     isAccentFlash: Boolean,
     isRunning: Boolean,
+    onOpenTuner: () -> Unit,
+    onOpenSpectrum: () -> Unit,
     onTapTempo: () -> Unit,
     onDecrease: () -> Unit,
     onDecreaseLarge: () -> Unit,
@@ -1722,9 +1859,26 @@ private fun TapTempoPopup(
             onDecreaseLarge = onDecreaseLarge,
             onIncrease = onIncrease,
             onIncreaseLarge = onIncreaseLarge,
+            readoutOffsetY = 0.dp,
+            readoutBottomSpacing = 0.dp,
+            adjustRowOffsetY = (-6).dp,
+            footerTopSpacing = 0.dp,
+            header = {
+                AudioToolButtons(
+                    appText = appText,
+                    onOpenTuner = onOpenTuner,
+                    onOpenSpectrum = onOpenSpectrum,
+                    modifier = Modifier
+                        .width(164.dp)
+                        .height(22.dp),
+                )
+
+                Spacer(modifier = Modifier.height(0.dp))
+
+            },
         ) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 StartStopButton(
@@ -1846,15 +2000,10 @@ private fun RhythmLiveCanvas(
             Spacer(modifier = Modifier.height(2.dp))
 
             Row(
-                modifier = Modifier.width(126.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.width(80.dp),
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                PulseBeatDot(
-                    beatFlash = beatFlash,
-                    accentType = beatAccentTypes.typeForBeat(currentBeatIndex),
-                )
-
                 Text(
                     text = "$currentBeatIndex/$beatsPerMeasure",
                     modifier = Modifier.width(68.dp),
@@ -1863,11 +2012,6 @@ private fun RhythmLiveCanvas(
                     color = MaterialTheme.colorScheme.onBackground,
                     textAlign = TextAlign.Center,
                 )
-
-                PulseBeatDot(
-                    beatFlash = beatFlash,
-                    accentType = beatAccentTypes.typeForBeat(currentBeatIndex),
-                )
             }
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -1875,8 +2019,8 @@ private fun RhythmLiveCanvas(
             SubdivisionDots(
                 subdivisionCount = subdivisionCount,
                 currentSubdivisionIndex = currentSubdivisionIndex,
-                activeSize = 8.dp,
-                inactiveSize = 6.dp,
+                activeSize = 20.dp,
+                inactiveSize = 10.dp,
                 spacing = 5.dp,
             )
 
@@ -1914,9 +2058,10 @@ private fun RhythmLiveCanvas(
 private fun RhythmElapsedTimer(
     isRunning: Boolean,
     playbackStartedAtMs: Long,
+    modifier: Modifier = Modifier,
 ) {
     var elapsedMs by remember(isRunning, playbackStartedAtMs) {
-        mutableStateOf(elapsedTimerMs(isRunning, playbackStartedAtMs))
+        mutableLongStateOf(elapsedTimerMs(isRunning, playbackStartedAtMs))
     }
 
     LaunchedEffect(isRunning, playbackStartedAtMs) {
@@ -1936,7 +2081,7 @@ private fun RhythmElapsedTimer(
     }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .width(58.dp)
             .height(18.dp),
         contentAlignment = Alignment.Center,
@@ -1978,13 +2123,24 @@ private fun RhythmEditDetails(
         beatFlash = beatFlash,
         modifier = modifier,
         onBeatAccentTypeCycle = onBeatAccentTypeCycle,
+        bottomContent = {
+            SmallCommandButton(
+                text = appText.done,
+                modifier = Modifier
+                    .width(64.dp)
+                    .height(24.dp),
+                fontSize = 9.sp,
+                onClick = onDone,
+            )
+        },
     ) {
-        Text(
+        SmallCommandButton(
             text = "$bpm BPM",
-            modifier = Modifier.clickable(onClick = onBpmClick),
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .width(78.dp)
+                .height(28.dp),
+            fontSize = 13.sp,
+            onClick = onBpmClick,
         )
 
         Spacer(modifier = Modifier.height(3.dp))
@@ -1999,7 +2155,6 @@ private fun RhythmEditDetails(
 
         RhythmValueStepper(
             valueText = "$beatsPerMeasure/4",
-            selected = true,
             onDecrease = {
                 onTimeSignatureChoice(steppedOption(TimeSignatureBeatOptions, beatsPerMeasure, -1))
             },
@@ -2021,7 +2176,6 @@ private fun RhythmEditDetails(
 
         RhythmValueStepper(
             valueText = "$subdivisionCount",
-            selected = true,
             onDecrease = {
                 onSubdivisionChoice(steppedOption(SubdivisionOptions, subdivisionCount, -1))
             },
@@ -2036,17 +2190,6 @@ private fun RhythmEditDetails(
         SubdivisionDots(
             subdivisionCount = subdivisionCount,
             currentSubdivisionIndex = currentSubdivisionIndex,
-        )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        SmallCommandButton(
-            text = appText.done,
-            modifier = Modifier
-                .width(64.dp)
-                .height(24.dp),
-            fontSize = 9.sp,
-            onClick = onDone,
         )
     }
 }
@@ -2138,7 +2281,6 @@ private fun RhythmEditorPopup(
 @Composable
 private fun RhythmValueStepper(
     valueText: String,
-    selected: Boolean,
     onDecrease: () -> Unit,
     onValueClick: () -> Unit,
     onIncrease: () -> Unit,
@@ -2156,12 +2298,12 @@ private fun RhythmValueStepper(
             onClick = onDecrease,
         )
 
-        SettingButton(
+        SmallCommandButton(
             text = valueText,
-            selected = selected,
             modifier = Modifier
                 .width(48.dp)
                 .height(24.dp),
+            fontSize = 11.sp,
             onClick = onValueClick,
         )
 
@@ -2289,11 +2431,10 @@ private fun BigPulseCircleSelector(
         }
 
         (1..rightCount).forEach { index ->
-            val beat = index
             val angle = splitCircleAngle(index, rightCount, rightSide = true)
             BeatAccentDotButton(
-                accentType = beatAccentTypes.typeForBeat(beat),
-                beatFlash = beatFlash && currentBeatIndex == beat,
+                accentType = beatAccentTypes.typeForBeat(index),
+                beatFlash = beatFlash && currentBeatIndex == index,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .offset(
@@ -2302,7 +2443,7 @@ private fun BigPulseCircleSelector(
                     )
                     .size(hitSize),
                 onClick = onBeatAccentTypeCycle?.let { onBeatChoice ->
-                    { onBeatChoice(beat) }
+                    { onBeatChoice(index) }
                 },
             )
         }
@@ -2360,27 +2501,21 @@ private fun BeatAccentDotButton(
     onClick: (() -> Unit)?,
 ) {
     val baseDotSize = when (accentType) {
-        BeatAccentType.Big,
+        BeatAccentType.Big -> 20.dp
+        BeatAccentType.Medium -> 16.dp
+        BeatAccentType.Small -> 13.dp
         BeatAccentType.Silent -> 20.dp
-        BeatAccentType.Medium -> 15.dp
-        BeatAccentType.Small -> 10.dp
     }
-    val dotSize = if (beatFlash) baseDotSize + 6.dp else baseDotSize
-    val dotColor = when (accentType) {
-        BeatAccentType.Big -> MaterialTheme.colorScheme.primary
-        BeatAccentType.Medium -> MaterialTheme.colorScheme.primary.copy(alpha = if (beatFlash) 1f else 0.9f)
-        BeatAccentType.Small -> MaterialTheme.colorScheme.primary.copy(alpha = if (beatFlash) 0.95f else 0.72f)
-        BeatAccentType.Silent -> Color.Transparent
+    val dotRadius = (if (beatFlash) baseDotSize + 6.dp else baseDotSize) / 2
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val dotAlpha = when (accentType) {
+        BeatAccentType.Big -> if (beatFlash) 1f else 0.9f
+        BeatAccentType.Medium -> if (beatFlash) 1f else 0.72f
+        BeatAccentType.Small -> if (beatFlash) 0.95f else 0.56f
+        BeatAccentType.Silent -> 0f
     }
-    val borderModifier = if (accentType == BeatAccentType.Silent) {
-        Modifier.border(
-            width = if (beatFlash) 3.dp else 2.dp,
-            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.95f),
-            shape = CircleShape,
-        )
-    } else {
-        Modifier
-    }
+    val borderAlpha = if (beatFlash) 0.95f else 0.58f
+    val borderWidth = if (beatFlash) 3.dp else 2.dp
 
     Box(
         modifier = modifier
@@ -2394,12 +2529,23 @@ private fun BeatAccentDotButton(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(dotSize)
-                .background(dotColor, CircleShape)
-                .then(borderModifier),
-        )
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val center = Offset(size.width / 2f, size.height / 2f)
+            if (accentType == BeatAccentType.Silent) {
+                drawCircle(
+                    color = primaryColor.copy(alpha = borderAlpha),
+                    radius = dotRadius.toPx(),
+                    center = center,
+                    style = Stroke(width = borderWidth.toPx()),
+                )
+            } else {
+                drawCircle(
+                    color = primaryColor.copy(alpha = dotAlpha),
+                    radius = dotRadius.toPx(),
+                    center = center,
+                )
+            }
+        }
     }
 }
 
@@ -2409,7 +2555,7 @@ private fun steppedOption(
     step: Int,
 ): Int {
     val currentIndex = options.indexOf(current).takeIf { it >= 0 }
-        ?: options.indexOf(options.minBy { kotlin.math.abs(it - current) })
+        ?: options.indexOf(options.minBy { abs(it - current) })
     return options[(currentIndex + step).coerceIn(0, options.lastIndex)]
 }
 
@@ -2428,40 +2574,41 @@ private fun PulseBeatDot(
     beatFlash: Boolean,
     accentType: BeatAccentType,
 ) {
-    val dotSize = when (accentType) {
-        BeatAccentType.Big -> if (beatFlash) 20.dp else 10.dp
-        BeatAccentType.Medium -> if (beatFlash) 15.dp else 8.dp
-        BeatAccentType.Small -> if (beatFlash) 10.dp else 6.dp
-        BeatAccentType.Silent -> if (beatFlash) 20.dp else 10.dp
+    val dotRadius = when (accentType) {
+        BeatAccentType.Big -> if (beatFlash) 10.dp else 5.dp
+        BeatAccentType.Medium -> if (beatFlash) 8.dp else 4.dp
+        BeatAccentType.Small -> if (beatFlash) 6.5.dp else 3.5.dp
+        BeatAccentType.Silent -> if (beatFlash) 10.dp else 5.dp
     }
-    val borderModifier = if (accentType == BeatAccentType.Silent) {
-        Modifier.border(
-            width = 2.dp,
-            color = MaterialTheme.colorScheme.secondary.copy(alpha = if (beatFlash) 0.9f else 0.55f),
-            shape = CircleShape,
-        )
-    } else {
-        Modifier
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val secondaryColor = MaterialTheme.colorScheme.secondary
+    val dotColor = when (accentType) {
+        BeatAccentType.Big -> if (beatFlash) primaryColor else secondaryColor.copy(alpha = 1f)
+        BeatAccentType.Medium -> if (beatFlash) primaryColor else secondaryColor.copy(alpha = 0.9f)
+        BeatAccentType.Small -> if (beatFlash) primaryColor else secondaryColor.copy(alpha = 0.72f)
+        BeatAccentType.Silent -> Color.Transparent
     }
-    val dotColor = if (accentType == BeatAccentType.Silent) {
-        Color.Transparent
-    } else if (beatFlash) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.secondary
-    }
+    val silentBorderColor = secondaryColor.copy(alpha = if (beatFlash) 0.9f else 0.55f)
 
-    Box(
+    Canvas(
         modifier = Modifier
             .size(24.dp),
-        contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(dotSize)
-                .background(dotColor, CircleShape)
-                .then(borderModifier),
-        )
+        val center = Offset(size.width / 2f, size.height / 2f)
+        if (accentType == BeatAccentType.Silent) {
+            drawCircle(
+                color = silentBorderColor,
+                radius = dotRadius.toPx(),
+                center = center,
+                style = Stroke(width = 2.dp.toPx()),
+            )
+        } else {
+            drawCircle(
+                color = dotColor,
+                radius = dotRadius.toPx(),
+                center = center,
+            )
+        }
     }
 }
 
@@ -2473,21 +2620,26 @@ private fun SubdivisionDots(
     inactiveSize: Dp = 5.dp,
     spacing: Dp = 5.dp,
 ) {
+    val slotSize = if (activeSize > inactiveSize) activeSize else inactiveSize
+    val dotColor = MaterialTheme.colorScheme.onBackground
     Row(
         horizontalArrangement = Arrangement.spacedBy(spacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         (1..subdivisionCount).forEach { subdivisionIndex ->
-            Box(
+            val active = subdivisionIndex == currentSubdivisionIndex
+            Canvas(
                 modifier = Modifier
-                    .size(if (subdivisionIndex == currentSubdivisionIndex) activeSize else inactiveSize)
-                    .background(
-                        color = MaterialTheme.colorScheme.onBackground.copy(
-                            alpha = if (subdivisionIndex == currentSubdivisionIndex) 0.72f else 0.3f,
-                        ),
-                        shape = CircleShape,
+                    .size(slotSize),
+            ) {
+                drawCircle(
+                    color = dotColor.copy(
+                        alpha = if (active) 0.72f else 0.3f,
                     ),
-            )
+                    radius = (if (active) activeSize else inactiveSize).toPx() / 2f,
+                    center = Offset(size.width / 2f, size.height / 2f),
+                )
+            }
         }
     }
 }
@@ -2567,13 +2719,23 @@ private fun rememberRhythmBeatVisualState(
         }
 
         while (true) {
-            beatVisualState = currentRhythmBeatVisualState(
+            val nextBeatVisualState = currentRhythmBeatVisualState(
                 bpm = bpm,
                 beatsPerMeasure = beatsPerMeasure,
                 subdivisionCount = subdivisionCount,
                 beatClockStartedAtMs = beatClockStartedAtMs,
             )
-            delay(32L)
+            if (nextBeatVisualState.beatFlash) {
+                BeatTimingTrace.mark("rhythm visual loop")
+            }
+            beatVisualState = nextBeatVisualState
+            delay(
+                rhythmVisualDelayMs(
+                    bpm = bpm,
+                    subdivisionCount = subdivisionCount,
+                    beatClockStartedAtMs = beatClockStartedAtMs,
+                ),
+            )
         }
     }
 
@@ -2601,6 +2763,36 @@ private fun currentRhythmBeatVisualState(
             .coerceIn(1, normalizedSubdivisionCount),
         beatFlash = beatElapsedMs < BEAT_FLASH_DURATION_MS,
     )
+}
+
+private fun rhythmVisualDelayMs(
+    bpm: Int,
+    subdivisionCount: Int,
+    beatClockStartedAtMs: Long,
+): Long {
+    val normalizedBpm = bpm.coerceIn(MIN_BPM, MAX_BPM)
+    val normalizedSubdivisionCount = subdivisionCount.toSupportedSubdivisionCount()
+    val intervalMs = (60_000L / normalizedBpm).coerceAtLeast(1L)
+    val subdivisionIntervalMs = (intervalMs / normalizedSubdivisionCount).coerceAtLeast(1L)
+    val elapsedMs = (SystemClock.elapsedRealtime() - beatClockStartedAtMs).coerceAtLeast(0L)
+    val beatElapsedMs = elapsedMs % intervalMs
+    val subdivisionElapsedMs = beatElapsedMs % subdivisionIntervalMs
+    val untilNextBeatMs = intervalMs - beatElapsedMs
+    val untilNextSubdivisionMs = subdivisionIntervalMs - subdivisionElapsedMs
+    val untilFlashEndsMs = if (beatElapsedMs < BEAT_FLASH_DURATION_MS) {
+        BEAT_FLASH_DURATION_MS - beatElapsedMs
+    } else {
+        Long.MAX_VALUE
+    }
+    val untilNextVisualBoundaryMs = minOf(
+        untilNextBeatMs,
+        untilNextSubdivisionMs,
+        untilFlashEndsMs,
+    )
+
+    return (untilNextVisualBoundaryMs - RHYTHM_VISUAL_WAKE_AHEAD_MS)
+        .coerceAtLeast(1L)
+        .coerceAtMost(RHYTHM_VISUAL_MAX_DELAY_MS)
 }
 
 @Composable
@@ -2662,6 +2854,7 @@ private fun PlaylistClockPage(
     songIndex: Int,
     isRunning: Boolean,
     beatClockStartedAtMs: Long,
+    playbackStartedAtMs: Long,
     clockImageResId: Int,
     clockColorArgb: Int,
     onPreviousSong: () -> Unit,
@@ -2684,7 +2877,7 @@ private fun PlaylistClockPage(
         ) {
             Text(
                 text = playlist.name,
-                fontSize = 9.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                 maxLines = 1,
@@ -2694,7 +2887,7 @@ private fun PlaylistClockPage(
             Text(
                 text = "${songIndex + 1}/${playlist.songs.size} ${song.name}",
                 modifier = Modifier.width(132.dp),
-                fontSize = 12.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
@@ -2707,7 +2900,7 @@ private fun PlaylistClockPage(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 48.dp)
-                .width(152.dp)
+                .width(164.dp)
                 .height(24.dp),
         ) {
             Text(
@@ -2744,7 +2937,7 @@ private fun PlaylistClockPage(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .padding(top = 14.dp)
-                .padding(start = 8.dp),
+                .padding(start = 0.dp),
             onClick = onPreviousSong,
         )
 
@@ -2753,35 +2946,43 @@ private fun PlaylistClockPage(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(top = 14.dp)
-                .padding(end = 8.dp),
+                .padding(end = 0.dp),
             onClick = onNextSong,
         )
 
-        PlaylistTimingBadge(
+        Text(
             text = "${song.beatsPerMeasure}/4 x${song.subdivisionCount}",
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 18.dp, bottom = 46.dp)
-                .width(44.dp)
-                .height(24.dp),
+            modifier = Modifier.align(Alignment.BottomStart)
+                .padding(start = 14.dp, bottom = 44.dp),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
         )
 
         GlassCommandButton(
             text = appText.edit,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 18.dp, bottom = 46.dp)
+                .padding(end = 12.dp, bottom = 40.dp)
                 .width(42.dp)
                 .height(24.dp),
             fontSize = 9.sp,
             onClick = onEditPlaylist,
         )
 
+        RhythmElapsedTimer(
+            isRunning = isRunning,
+            playbackStartedAtMs = playbackStartedAtMs,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 43.dp),
+        )
+
         GlassCommandButton(
             text = if (isRunning) appText.stopUpper else appText.startUpper,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 12.dp)
+                .padding(bottom = 8.dp)
                 .width(104.dp)
                 .height(30.dp),
             fontSize = 15.sp,
@@ -2805,8 +3006,8 @@ private fun PlaylistNavButton(
 
     Box(
         modifier = modifier
-            .width(34.dp)
-            .height(56.dp)
+            .width(38.dp)
+            .height(64.dp)
             .clip(shape)
             .background(
                 brush = Brush.verticalGradient(
@@ -2828,42 +3029,9 @@ private fun PlaylistNavButton(
     ) {
         Text(
             text = if (isNext) ">" else "<",
-            fontSize = 30.sp,
+            fontSize = 50.sp,
             fontWeight = FontWeight.Bold,
             color = chevronColor,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-@Composable
-private fun PlaylistTimingBadge(
-    text: String,
-    modifier: Modifier,
-) {
-    val shape = RoundedCornerShape(12.dp)
-
-    Box(
-        modifier = modifier
-            .clip(shape)
-            .background(
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-                shape = shape,
-            )
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-                shape = shape,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
         )
     }
@@ -3020,7 +3188,7 @@ private fun DismissibleEditorPopup(
     onDone: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    var horizontalDrag by remember { mutableStateOf(0f) }
+    var horizontalDrag by remember { mutableFloatStateOf(0f) }
     val focusRequester = remember { FocusRequester() }
 
     BackHandler(onBack = onDone)
@@ -3332,55 +3500,6 @@ private fun EditValueRow(
 }
 
 @Composable
-private fun UpgradePage(
-    appText: AppText,
-    isPurchased: Boolean,
-    onBuyNow: () -> Unit,
-    onUseWatchFace: () -> Unit,
-) {
-    BeatPulsePage {
-        Text(
-            text = appText.pulsePro,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Text(
-            text = appText.fullAppIncludes,
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        UpgradeDetail(appText.customSettings)
-        UpgradeDetail(appText.savedTempoPlaylists)
-        UpgradeDetail(appText.secondsToBeatsClock)
-        UpgradeDetail(appText.moreBeatSounds)
-        UpgradeDetail(appText.watchFace)
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Button(
-            onClick = if (isPurchased) onUseWatchFace else onBuyNow,
-            modifier = Modifier
-                .width(96.dp)
-                .height(34.dp),
-            contentPadding = PaddingValues(0.dp),
-        ) {
-            CenteredButtonLabel(
-                text = if (isPurchased) appText.useFace else appText.buyNow,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-    }
-}
-
-@Composable
 private fun ColorPickerRow(
     selectedColorArgb: Int,
     onColorChoice: (Int) -> Unit,
@@ -3504,6 +3623,10 @@ private fun BigRingModePicker(
 private fun ClockImageChoiceButton(
     text: String,
     selected: Boolean,
+    modifier: Modifier = Modifier
+        .width(42.dp)
+        .height(26.dp),
+    fontSize: TextUnit = 9.sp,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(50)
@@ -3519,9 +3642,7 @@ private fun ClockImageChoiceButton(
     }
 
     Box(
-        modifier = Modifier
-            .width(42.dp)
-            .height(26.dp)
+        modifier = modifier
             .clip(shape)
             .background(backgroundColor, shape)
             .border(
@@ -3534,7 +3655,7 @@ private fun ClockImageChoiceButton(
     ) {
         Text(
             text = text,
-            fontSize = 9.sp,
+            fontSize = fontSize,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             color = if (selected) {
                 MaterialTheme.colorScheme.primary
@@ -3571,22 +3692,14 @@ private fun LanguagePicker(
 }
 
 @Composable
-private fun UpgradeDetail(
-    text: String,
-) {
-    Text(
-        text = text,
-        fontSize = 12.sp,
-        color = MaterialTheme.colorScheme.onBackground,
-    )
-}
-
-@Composable
 private fun SettingsPage(
     appText: AppText,
     hapticsEnabled: Boolean,
     beepEnabled: Boolean,
-    keepScreenAwakeWhilePlaying: Boolean,
+    accentIntensityMode: AccentIntensityMode,
+    accentIntensityRanges: List<AccentIntensityRange>,
+    a4ReferenceHz: Int,
+    keepScreenMode: KeepScreenMode,
     mainColorArgb: Int,
     backgroundColorArgb: Int,
     clockColorArgb: Int,
@@ -3597,7 +3710,10 @@ private fun SettingsPage(
     appCpuUsagePercent: Float?,
     onHapticsToggle: () -> Unit,
     onBeepToggle: () -> Unit,
-    onKeepScreenAwakeWhilePlayingToggle: () -> Unit,
+    onAccentIntensityModeChoice: (AccentIntensityMode) -> Unit,
+    onAccentIntensityRangesChange: (List<AccentIntensityRange>) -> Unit,
+    onA4ReferenceHzChange: (Int) -> Unit,
+    onKeepScreenModeChoice: (KeepScreenMode) -> Unit,
     onMainColorChoice: (Int) -> Unit,
     onBackgroundColorChoice: (Int) -> Unit,
     onClockColorChoice: (Int) -> Unit,
@@ -3606,6 +3722,8 @@ private fun SettingsPage(
     onBigRingModeChoice: (BigRingFlashMode) -> Unit,
     onLanguageChoice: (AppLanguage) -> Unit,
 ) {
+    var intensityPickerOpen by rememberSaveable { mutableStateOf(false) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -3651,6 +3769,34 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
+                text = appText.intensity,
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+
+            Spacer(modifier = Modifier.height(3.dp))
+
+            AccentIntensityPicker(
+                selectedMode = accentIntensityMode,
+                accentIntensityRanges = accentIntensityRanges,
+                appLanguage = appLanguage,
+                onClick = {
+                    intensityPickerOpen = true
+                },
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            A4ReferenceControl(
+                label = appText.a4Reference,
+                referenceHz = a4ReferenceHz,
+                onReferenceHzChange = onA4ReferenceHzChange,
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
                 text = appText.diagnostics,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
@@ -3667,7 +3813,7 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = appText.keepScreenAwakeWhilePlaying,
+                text = appText.keepScreenOn,
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -3675,13 +3821,10 @@ private fun SettingsPage(
 
             Spacer(modifier = Modifier.height(3.dp))
 
-            SettingButton(
-                text = if (keepScreenAwakeWhilePlaying) appText.on else appText.off,
-                selected = keepScreenAwakeWhilePlaying,
-                modifier = Modifier
-                    .width(50.dp)
-                    .height(28.dp),
-                onClick = onKeepScreenAwakeWhilePlayingToggle,
+            KeepScreenModeButtons(
+                selectedMode = keepScreenMode,
+                appText = appText,
+                onModeChoice = onKeepScreenModeChoice,
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -3760,6 +3903,21 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(5.dp))
 
             Text(
+                text = appText.handColor,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            ColorPickerRow(
+                selectedColorArgb = clockColorArgb,
+                onColorChoice = onClockColorChoice,
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
                 text = appText.clockImage,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -3776,21 +3934,6 @@ private fun SettingsPage(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = appText.handColor,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            ColorPickerRow(
-                selectedColorArgb = clockColorArgb,
-                onColorChoice = onClockColorChoice,
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
                 text = appText.language,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -3801,6 +3944,30 @@ private fun SettingsPage(
             LanguagePicker(
                 selectedLanguage = appLanguage,
                 onLanguageChoice = onLanguageChoice,
+            )
+        }
+
+        if (intensityPickerOpen) {
+            AccentIntensityChoicePopup(
+                title = appText.intensity,
+                selectedMode = accentIntensityMode,
+                accentIntensityRanges = accentIntensityRanges,
+                appLanguage = appLanguage,
+                dismissText = appText.done,
+                onModeChoice = { mode ->
+                    onAccentIntensityModeChoice(mode)
+                },
+                onValueChange = { mode, value ->
+                    onAccentIntensityRangesChange(
+                        accentIntensityRanges.withRangeFor(
+                            mode,
+                            accentIntensityRanges.rangeFor(mode).copy(valuePercent = value),
+                        ),
+                    )
+                },
+                onDismiss = {
+                    intensityPickerOpen = false
+                },
             )
         }
     }
@@ -3835,6 +4002,279 @@ private fun CpuUsageReadout(
             maxLines = 1,
             textAlign = TextAlign.End,
         )
+    }
+}
+
+@Composable
+private fun A4ReferenceControl(
+    label: String,
+    referenceHz: Int,
+    onReferenceHzChange: (Int) -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+
+        Spacer(modifier = Modifier.height(3.dp))
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SmallCommandButton(
+                text = "-",
+                modifier = Modifier
+                    .width(24.dp)
+                    .height(22.dp),
+                fontSize = 11.sp,
+                onClick = {
+                    onReferenceHzChange((referenceHz - 1).coerceAtLeast(MIN_A4_REFERENCE_HZ))
+                },
+            )
+
+            Text(
+                text = "A $referenceHz Hz",
+                modifier = Modifier.width(72.dp),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+
+            SmallCommandButton(
+                text = "+",
+                modifier = Modifier
+                    .width(24.dp)
+                    .height(22.dp),
+                fontSize = 11.sp,
+                onClick = {
+                    onReferenceHzChange((referenceHz + 1).coerceAtMost(MAX_A4_REFERENCE_HZ))
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccentIntensityPicker(
+    selectedMode: AccentIntensityMode,
+    accentIntensityRanges: List<AccentIntensityRange>,
+    appLanguage: AppLanguage,
+    onClick: () -> Unit,
+) {
+    val summaryText = AccentIntensityChoices.joinToString(separator = " ") { choice ->
+        "${choice.labelFor(appLanguage)} ${accentIntensityRanges.rangeFor(choice.mode).valuePercent}"
+    }
+
+    SettingButton(
+        text = summaryText,
+        selected = true,
+        modifier = Modifier
+            .width(166.dp)
+            .height(32.dp),
+        fontSize = 8.sp,
+        onClick = onClick,
+    )
+}
+
+@Composable
+private fun AccentIntensityChoicePopup(
+    title: String,
+    selectedMode: AccentIntensityMode,
+    accentIntensityRanges: List<AccentIntensityRange>,
+    appLanguage: AppLanguage,
+    dismissText: String,
+    onModeChoice: (AccentIntensityMode) -> Unit,
+    onValueChange: (AccentIntensityMode, Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.94f))
+            .clickable(onClick = {}),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = title,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Spacer(modifier = Modifier.height(7.dp))
+
+            AccentIntensityChoices.forEach { choice ->
+                AccentIntensityOptionButton(
+                    choice = choice,
+                    range = accentIntensityRanges.rangeFor(choice.mode),
+                    selected = selectedMode == choice.mode,
+                    appLanguage = appLanguage,
+                    onClick = { onModeChoice(choice.mode) },
+                    onValueChange = { value -> onValueChange(choice.mode, value) },
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+
+            SmallCommandButton(
+                text = dismissText,
+                modifier = Modifier
+                    .width(62.dp)
+                    .height(26.dp),
+                fontSize = 10.sp,
+                onClick = onDismiss,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccentIntensityOptionButton(
+    choice: AccentIntensityChoice,
+    range: AccentIntensityRange,
+    selected: Boolean,
+    appLanguage: AppLanguage,
+    onClick: () -> Unit,
+    onValueChange: (Int) -> Unit,
+) {
+    val shape = RoundedCornerShape(50)
+    val backgroundColor = if (selected) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.34f)
+    } else {
+        Color.Black.copy(alpha = 0.34f)
+    }
+    val borderColor = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.24f)
+    }
+
+    Column(
+        modifier = Modifier
+            .width(166.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(
+            modifier = Modifier
+                .width(154.dp)
+                .height(28.dp)
+                .clip(shape)
+                .background(backgroundColor, shape)
+                .border(
+                    width = if (selected) 2.dp else 1.dp,
+                    color = borderColor,
+                    shape = shape,
+                )
+                .clickable(onClick = onClick)
+                .padding(horizontal = 9.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = choice.labelFor(appLanguage),
+                fontSize = 10.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.84f)
+                },
+                maxLines = 1,
+            )
+
+            Text(
+                text = "${range.valuePercent}%",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+            )
+
+            Text(
+                text = "${range.maxPercent}-${range.minPercent}",
+                fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.76f),
+                maxLines = 1,
+            )
+        }
+
+        Spacer(modifier = Modifier.height(3.dp))
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SmallCommandButton(
+                text = "-",
+                modifier = Modifier
+                    .width(22.dp)
+                    .height(20.dp),
+                fontSize = 10.sp,
+                onClick = {
+                    onValueChange((range.valuePercent - 1).coerceAtLeast(range.minPercent))
+                },
+            )
+
+            Text(
+                text = "${range.valuePercent}%",
+                modifier = Modifier.width(40.dp),
+                fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+
+            SmallCommandButton(
+                text = "+",
+                modifier = Modifier
+                    .width(22.dp)
+                    .height(20.dp),
+                fontSize = 10.sp,
+                onClick = {
+                    onValueChange((range.valuePercent + 1).coerceAtMost(range.maxPercent))
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun KeepScreenModeButtons(
+    selectedMode: KeepScreenMode,
+    appText: AppText,
+    onModeChoice: (KeepScreenMode) -> Unit,
+) {
+    val choices = listOf(
+        KeepScreenMode.AppOpen to appText.keepScreenAppOpen,
+        KeepScreenMode.Playing to appText.keepScreenPlaying,
+        KeepScreenMode.WatchTimeout to appText.keepScreenWatchTimeout,
+    )
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        choices.forEach { (mode, label) ->
+            ClockImageChoiceButton(
+                text = label,
+                selected = selectedMode == mode,
+                onClick = { onModeChoice(mode) },
+            )
+        }
     }
 }
 
@@ -3898,7 +4338,7 @@ private fun AudioToolButtons(
         GlassCommandButton(
             text = "EQ",
             modifier = Modifier
-                .width(38.dp)
+                .width(50.dp)
                 .height(22.dp),
             fontSize = 10.sp,
             selected = false,
@@ -3919,7 +4359,8 @@ private fun AnalyzerOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.96f)),
+            .background(Color.Black.copy(alpha = 0.96f))
+            .clickable(onClick = {}),
     ) {
         content()
 
@@ -3960,99 +4401,126 @@ private fun TunerPage(
     onSaveKey: (String) -> Unit,
     onRequestMicPermission: () -> Unit,
 ) {
-    BeatPulsePage {
-        Text(
-            text = appText.tuner,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-        )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         if (!micPermissionGranted) {
-            MicPermissionButton(appText = appText, onClick = onRequestMicPermission)
-            return@BeatPulsePage
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = appText.tuner,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                MicPermissionButton(appText = appText, onClick = onRequestMicPermission)
+            }
+            return@Box
         }
 
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 0.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             TunerListenProfile.entries.forEach { profile ->
                 ClockImageChoiceButton(
                     text = profile.labelFor(appLanguage),
                     selected = selectedProfile == profile,
+                    modifier = Modifier
+                        .width(36.dp)
+                        .height(23.dp),
+                    fontSize = 8.sp,
                     onClick = { onProfileChoice(profile) },
                 )
             }
         }
 
-        Text(
-            text = audioAnalysisState.noteName,
-            fontSize = 34.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            textAlign = TextAlign.Center,
-        )
-
-        Text(
-            text = audioAnalysisState.frequencyHz?.let { "${it.roundToInt()} Hz" } ?: "-- Hz",
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onBackground,
-            textAlign = TextAlign.Center,
-        )
-
-        Text(
-            text = "A415 avg",
-            fontSize = 9.sp,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
-            textAlign = TextAlign.Center,
-        )
-
-        Spacer(modifier = Modifier.height(2.dp))
-        TunerNeedle(cents = audioAnalysisState.cents)
-        Spacer(modifier = Modifier.height(2.dp))
-
-        Text(
-            text = "${audioAnalysisState.cents.coerceIn(-99, 99)} cents",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
-            textAlign = TextAlign.Center,
-        )
-
-        val recentNotesText = audioAnalysisState.recentNotes.takeLast(8).joinToString(" ")
-        Text(
-            text = if (recentNotesText.isBlank()) "--" else recentNotesText,
-            fontSize = 10.sp,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .width(126.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                text = "${appText.keyGuess}: ${audioAnalysisState.guessedKey ?: "--"}",
-                fontSize = 11.sp,
+                text = appText.tuner,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = audioAnalysisState.noteName,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                textAlign = TextAlign.Center,
+            )
+
+            Text(
+                text = audioAnalysisState.frequencyHz?.let { "${it.roundToInt()} Hz" } ?: "-- Hz",
+                fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
 
-            val guessedKey = audioAnalysisState.guessedKey
-            if (guessedKey != null) {
-                SmallCommandButton(
-                    text = appText.saveKey,
-                    modifier = Modifier
-                        .width(60.dp)
-                        .height(22.dp),
-                    fontSize = 8.sp,
-                    onClick = { onSaveKey(guessedKey) },
+            Spacer(modifier = Modifier.height(2.dp))
+            TunerNeedle(cents = audioAnalysisState.cents)
+            Spacer(modifier = Modifier.height(2.dp))
+
+            Text(
+                text = "${audioAnalysisState.cents.coerceIn(-99, 99)} cents",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
+                textAlign = TextAlign.Center,
+            )
+
+            val recentNotesText = audioAnalysisState.recentNotes.takeLast(8).joinToString(" ")
+            Text(
+                text = recentNotesText.ifBlank { "--" },
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${appText.keyGuess}: ${audioAnalysisState.guessedKey ?: "--"}",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center,
                 )
+
+                val guessedKey = audioAnalysisState.guessedKey
+                if (guessedKey != null) {
+                    SmallCommandButton(
+                        text = appText.saveKey,
+                        modifier = Modifier
+                            .width(54.dp)
+                            .height(21.dp),
+                        fontSize = 8.sp,
+                        onClick = { onSaveKey(guessedKey) },
+                    )
+                }
             }
         }
     }
@@ -4062,39 +4530,57 @@ private fun TunerPage(
 private fun SpectrumAnalyzerPage(
     appText: AppText,
     audioAnalysisState: AudioAnalysisState,
+    a4ReferenceHz: Int,
     micPermissionGranted: Boolean,
     onRequestMicPermission: () -> Unit,
 ) {
-    BeatPulsePage {
-        Text(
-            text = appText.spectrum,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-        )
+    val peakReading = remember(audioAnalysisState.spectrum) {
+        audioAnalysisState.spectrum.peakSpectrumReading()
+    }
 
-        Spacer(modifier = Modifier.height(6.dp))
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = appText.spectrum,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
 
-        if (!micPermissionGranted) {
-            MicPermissionButton(appText = appText, onClick = onRequestMicPermission)
-            return@BeatPulsePage
+            Spacer(modifier = Modifier.height(6.dp))
+
+            if (!micPermissionGranted) {
+                MicPermissionButton(appText = appText, onClick = onRequestMicPermission)
+            } else {
+                SpectrumAnalyzerGraph(
+                    spectrum = audioAnalysisState.spectrum,
+                    peakReading = peakReading,
+                    modifier = Modifier
+                        .width(176.dp)
+                        .height(118.dp),
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = peakReading?.let { peak ->
+                        val noteName = peak.frequencyHz.toNoteReading(a4ReferenceHz).first
+                        "${peak.frequencyHz.roundToInt()} Hz  $noteName  ${peak.relativeDb.roundToInt()} dB"
+                    } ?: "-- Hz",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
-
-        SpectrumBars(
-            spectrum = audioAnalysisState.spectrum,
-            modifier = Modifier
-                .width(158.dp)
-                .height(92.dp),
-        )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Text(
-            text = audioAnalysisState.frequencyHz?.let { "${it.roundToInt()} Hz" } ?: "-- Hz",
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
-            textAlign = TextAlign.Center,
-        )
     }
 }
 
@@ -4157,61 +4643,206 @@ private fun TunerNeedle(cents: Int) {
 }
 
 @Composable
-private fun SpectrumBars(
+private fun SpectrumAnalyzerGraph(
     spectrum: List<Float>,
+    peakReading: SpectrumPeak?,
     modifier: Modifier = Modifier,
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
+    val secondaryColor = MaterialTheme.colorScheme.secondary
+    val axisColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.52f)
     Canvas(modifier = modifier) {
-        val barCount = spectrum.size.coerceAtLeast(1)
-        val gap = 1.dp.toPx()
-        val barWidth = ((size.width - gap * (barCount - 1)) / barCount).coerceAtLeast(1f)
+        val chartLeft = 24.dp.toPx()
+        val chartTop = 14.dp.toPx()
+        val chartRight = size.width - 2.dp.toPx()
+        val chartBottom = size.height - 18.dp.toPx()
+        val chartWidth = (chartRight - chartLeft).coerceAtLeast(1f)
+        val chartHeight = (chartBottom - chartTop).coerceAtLeast(1f)
+        val points = spectrum.ifEmpty { List(SPECTRUM_BAR_COUNT) { 0f } }
+        val minFrequency = 30f
+        val maxFrequency = 10_000f
+        val logMin = log2(minFrequency)
+        val logMax = log2(maxFrequency)
+        val minDb = -60f
+        val maxDb = 0f
+        val dbRange = maxDb - minDb
 
-        spectrum.forEachIndexed { index, level ->
-            val normalized = level.coerceIn(0f, 1f)
-            val barHeight = (normalized * size.height).coerceAtLeast(2.dp.toPx())
-            val left = index * (barWidth + gap)
-            drawRoundRect(
-                color = primaryColor.copy(alpha = 0.35f + normalized * 0.65f),
-                topLeft = Offset(left, size.height - barHeight),
-                size = androidx.compose.ui.geometry.Size(barWidth, barHeight),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+        fun frequencyToX(frequency: Float): Float {
+            val normalized = ((log2(frequency.coerceIn(minFrequency, maxFrequency)) - logMin) / (logMax - logMin))
+                .coerceIn(0f, 1f)
+            return chartLeft + (chartWidth * normalized)
+        }
+
+        fun dbToY(db: Float): Float {
+            val normalized = ((maxDb - db.coerceIn(minDb, maxDb)) / dbRange).coerceIn(0f, 1f)
+            return chartTop + (chartHeight * normalized)
+        }
+
+        fun levelToDb(level: Float): Float = level.toRelativeDb(minDb)
+
+        drawRect(
+            color = Color.Black.copy(alpha = 0.22f),
+            topLeft = Offset(chartLeft, chartTop),
+            size = androidx.compose.ui.geometry.Size(chartWidth, chartHeight),
+        )
+
+        drawRect(
+            color = Color.White.copy(alpha = 0.16f),
+            topLeft = Offset(frequencyToX(20f), chartTop),
+            size = androidx.compose.ui.geometry.Size(
+                (frequencyToX(55f) - frequencyToX(20f)).coerceAtLeast(1f),
+                chartHeight,
+            ),
+        )
+
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = axisColor.toArgb()
+            textSize = 7.sp.toPx()
+            textAlign = Paint.Align.RIGHT
+        }
+        val axisTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = axisColor.copy(alpha = 0.72f).toArgb()
+            textSize = 6.sp.toPx()
+            textAlign = Paint.Align.RIGHT
+        }
+        val bottomTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = axisColor.toArgb()
+            textSize = 7.sp.toPx()
+            textAlign = Paint.Align.CENTER
+        }
+
+        drawContext.canvas.nativeCanvas.drawText(
+            "Rel dB",
+            chartLeft - 5.dp.toPx(),
+            chartTop - 6.dp.toPx(),
+            axisTitlePaint,
+        )
+
+        listOf(0f, -12f, -24f, -36f, -48f, -60f).forEach { db ->
+            val y = dbToY(db)
+            drawLine(
+                color = axisColor.copy(alpha = if (db == 0f) 0.24f else 0.16f),
+                start = Offset(chartLeft, y),
+                end = Offset(chartRight, y),
+                strokeWidth = 1.dp.toPx(),
+            )
+            drawContext.canvas.nativeCanvas.drawText(
+                "${db.roundToInt()}dB",
+                chartLeft - 5.dp.toPx(),
+                y + 2.5.dp.toPx(),
+                textPaint,
             )
         }
-    }
-}
 
-@Composable
-private fun AccentBeatButton(
-    beat: Int,
-    selected: Boolean,
-    bigLabel: String,
-    onClick: () -> Unit,
-) {
-    Button(
-        onClick = onClick,
-        modifier = Modifier.size(if (selected) 40.dp else 28.dp),
-        contentPadding = PaddingValues(0.dp),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = "$beat",
-                fontSize = if (selected) 15.sp else 11.sp,
-                fontWeight = FontWeight.Bold,
+        val frequencyTicks = listOf(30f, 50f, 100f, 200f, 500f, 1_000f, 2_000f, 5_000f, 10_000f)
+        frequencyTicks.forEach { frequency ->
+            val x = frequencyToX(frequency)
+            drawLine(
+                color = secondaryColor.copy(alpha = 0.12f),
+                start = Offset(x, chartTop),
+                end = Offset(x, chartBottom),
+                strokeWidth = 1.dp.toPx(),
             )
+            val label = when {
+                frequency >= 1_000f -> "${(frequency / 1_000f).roundToInt()}k"
+                else -> frequency.roundToInt().toString()
+            }
+            drawContext.canvas.nativeCanvas.drawText(
+                label,
+                x,
+                chartBottom + 10.dp.toPx(),
+                bottomTextPaint,
+            )
+        }
 
-            if (selected) {
-                Text(
-                    text = bigLabel,
-                    fontSize = 7.sp,
-                    fontWeight = FontWeight.Bold,
+        val barCount = points.size.coerceAtLeast(1)
+        points.forEachIndexed { index, level ->
+            val startProgress = index.toFloat() / barCount
+            val endProgress = (index + 1).toFloat() / barCount
+            val startFrequency = minFrequency * (maxFrequency / minFrequency).pow(startProgress)
+            val endFrequency = minFrequency * (maxFrequency / minFrequency).pow(endProgress)
+            val left = frequencyToX(startFrequency)
+            val right = frequencyToX(endFrequency)
+            val db = levelToDb(level)
+            val top = dbToY(db)
+            val barWidth = (right - left - 1.dp.toPx()).coerceAtLeast(1f)
+            drawRoundRect(
+                color = primaryColor.copy(alpha = 0.18f + level.coerceIn(0f, 1f) * 0.34f),
+                topLeft = Offset(left, top),
+                size = androidx.compose.ui.geometry.Size(barWidth, chartBottom - top),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx()),
+            )
+        }
+
+        val fillPath = Path().apply {
+            moveTo(chartLeft, chartBottom)
+            points.forEachIndexed { index, level ->
+                val frequency = if (points.size == 1) {
+                    30f
+                } else {
+                    minFrequency * (maxFrequency / minFrequency).pow(index.toFloat() / points.lastIndex)
+                }
+                val db = levelToDb(level)
+                lineTo(frequencyToX(frequency), dbToY(db))
+            }
+            lineTo(chartRight, chartBottom)
+            close()
+        }
+
+        drawPath(
+            path = fillPath,
+            color = primaryColor.copy(alpha = 0.12f),
+        )
+
+        var previousPoint: Offset? = null
+        points.forEachIndexed { index, level ->
+            val frequency = if (points.size == 1) {
+                30f
+            } else {
+                minFrequency * (maxFrequency / minFrequency).pow(index.toFloat() / points.lastIndex)
+            }
+            val db = levelToDb(level)
+            val point = Offset(frequencyToX(frequency), dbToY(db))
+            previousPoint?.let { previous ->
+                drawLine(
+                    color = primaryColor.copy(alpha = 0.48f),
+                    start = previous,
+                    end = point,
+                    strokeWidth = 2.dp.toPx(),
+                    cap = StrokeCap.Round,
                 )
             }
+            previousPoint = point
         }
+
+        peakReading?.let { peak ->
+            val peakX = frequencyToX(peak.frequencyHz)
+            val peakY = dbToY(peak.relativeDb)
+            drawLine(
+                color = secondaryColor.copy(alpha = 0.82f),
+                start = Offset(peakX, chartTop),
+                end = Offset(peakX, chartBottom),
+                strokeWidth = 1.5.dp.toPx(),
+            )
+            drawCircle(
+                color = secondaryColor,
+                radius = 3.2.dp.toPx(),
+                center = Offset(peakX, peakY),
+            )
+        }
+
+        drawLine(
+            color = axisColor.copy(alpha = 0.34f),
+            start = Offset(chartLeft, chartTop),
+            end = Offset(chartLeft, chartBottom),
+            strokeWidth = 1.dp.toPx(),
+        )
+        drawLine(
+            color = axisColor.copy(alpha = 0.34f),
+            start = Offset(chartLeft, chartBottom),
+            end = Offset(chartRight, chartBottom),
+            strokeWidth = 1.dp.toPx(),
+        )
     }
 }
 
@@ -4220,6 +4851,7 @@ private fun SettingButton(
     text: String,
     selected: Boolean,
     modifier: Modifier,
+    fontSize: TextUnit = 11.sp,
     onClick: () -> Unit,
 ) {
     Button(
@@ -4229,7 +4861,7 @@ private fun SettingButton(
     ) {
         CenteredButtonLabel(
             text = text,
-            fontSize = 11.sp,
+            fontSize = fontSize,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
         )
     }
@@ -4308,17 +4940,48 @@ private fun GlassCommandButton(
 }
 
 @Composable
-private fun BigPulseRing(
+private fun BigPulseRingOverlay(
+    beatFlash: Boolean,
+    flashingAccentType: BeatAccentType,
+    bigRingFlashMode: BigRingFlashMode,
     colorArgb: Int,
     modifier: Modifier = Modifier,
 ) {
+    val shouldFlash = bigRingFlashMode.shouldFlashRing(
+        beatFlash = beatFlash,
+        flashingAccentType = flashingAccentType,
+    )
+
+    if (shouldFlash) {
+        BeatTimingTrace.mark("big ring draw")
+    }
+
+    BigPulseRing(
+        colorArgb = colorArgb,
+        alpha = if (shouldFlash) {
+            0.95f
+        } else {
+            0f
+        },
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun BigPulseRing(
+    colorArgb: Int,
+    alpha: Float = 0.95f,
+    modifier: Modifier = Modifier,
+) {
     Canvas(modifier = modifier) {
+        if (alpha <= 0f) return@Canvas
+
         val strokeWidth = 6.dp.toPx()
         val center = Offset(size.width / 2f, size.height / 2f)
         if (isRainbowColor(colorArgb)) {
             drawCircle(
                 brush = Brush.sweepGradient(
-                    colors = RainbowColors,
+                    colors = RainbowColors.map { color -> color.copy(alpha = alpha.coerceIn(0f, 1f)) },
                     center = center,
                 ),
                 radius = (size.minDimension - strokeWidth) / 2f,
@@ -4327,7 +4990,7 @@ private fun BigPulseRing(
             )
         } else {
             drawCircle(
-                color = colorFromChoice(colorArgb).copy(alpha = 0.95f),
+                color = colorFromChoice(colorArgb).copy(alpha = alpha.coerceIn(0f, 1f)),
                 radius = (size.minDimension - strokeWidth) / 2f,
                 center = center,
                 style = Stroke(width = strokeWidth),
@@ -4385,6 +5048,7 @@ private fun BeatTempoReadout(
     bpm: Int,
     beatFlash: Boolean,
     isAccentFlash: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val pulseSize = when {
         beatFlash && isAccentFlash -> 28.dp
@@ -4393,6 +5057,7 @@ private fun BeatTempoReadout(
     }
 
     Row(
+        modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -4475,6 +5140,8 @@ private fun CenteredButtonLabel(
             text = text,
             fontSize = fontSize,
             fontWeight = fontWeight,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
         )
     }
 }
@@ -4628,6 +5295,7 @@ private fun defaultSavedPlaylists(): List<SavedPlaylist> {
                     accentBeat = 1,
                     subdivisionCount = 1,
                     beatAccentTypes = defaultBeatAccentTypes(4, 1),
+                    accentIntensityMode = AccentIntensityMode.Big,
                     musicalKey = "C",
                     note = "Count in",
                 ),
@@ -4638,6 +5306,7 @@ private fun defaultSavedPlaylists(): List<SavedPlaylist> {
                     accentBeat = 1,
                     subdivisionCount = 1,
                     beatAccentTypes = defaultBeatAccentTypes(4, 1),
+                    accentIntensityMode = AccentIntensityMode.Big,
                     musicalKey = "G",
                     note = "Keep pocket",
                 ),
@@ -4648,6 +5317,7 @@ private fun defaultSavedPlaylists(): List<SavedPlaylist> {
                     accentBeat = 1,
                     subdivisionCount = 1,
                     beatAccentTypes = defaultBeatAccentTypes(4, 1),
+                    accentIntensityMode = AccentIntensityMode.Big,
                     musicalKey = "D",
                     note = "Big accents",
                 ),
@@ -4663,6 +5333,7 @@ private fun defaultSavedPlaylists(): List<SavedPlaylist> {
                     accentBeat = 1,
                     subdivisionCount = 1,
                     beatAccentTypes = defaultBeatAccentTypes(4, 1),
+                    accentIntensityMode = AccentIntensityMode.Big,
                     musicalKey = "Am",
                     note = "Hold tempo",
                 ),
@@ -4673,6 +5344,7 @@ private fun defaultSavedPlaylists(): List<SavedPlaylist> {
                     accentBeat = 1,
                     subdivisionCount = 1,
                     beatAccentTypes = defaultBeatAccentTypes(4, 1),
+                    accentIntensityMode = AccentIntensityMode.Big,
                     musicalKey = "Em",
                     note = "Loop twice",
                 ),
@@ -4697,6 +5369,7 @@ private fun defaultPlaylistSong(number: Int): PlaylistSong {
         accentBeat = 1,
         subdivisionCount = 1,
         beatAccentTypes = defaultBeatAccentTypes(4, 1),
+        accentIntensityMode = AccentIntensityMode.Big,
         musicalKey = "C",
         note = "Count in",
     )
@@ -4765,6 +5438,12 @@ private fun Context.loadSavedPlaylists(): List<SavedPlaylist> {
                                     .toSupportedSubdivisionCount(),
                                 beatAccentTypes = songObject.optJSONArray("beatAccentTypes")
                                     .toBeatAccentTypes(loadedBeatsPerMeasure, loadedAccentBeat),
+                                accentIntensityMode = AccentIntensityMode.fromPersistedValue(
+                                    songObject.optInt(
+                                        "accentIntensityMode",
+                                        AccentIntensityMode.Big.persistedValue,
+                                    ),
+                                ),
                                 musicalKey = songObject.optString("musicalKey", "C"),
                                 note = songObject.optString("note", "Count in"),
                             ),
@@ -4799,6 +5478,7 @@ private fun Context.saveSavedPlaylists(playlists: List<SavedPlaylist>) {
                     .put("accentBeat", song.accentBeat)
                     .put("subdivisionCount", song.subdivisionCount)
                     .put("beatAccentTypes", song.beatAccentTypes.toJsonArray())
+                    .put("accentIntensityMode", song.accentIntensityMode.persistedValue)
                     .put("musicalKey", song.musicalKey)
                     .put("note", song.note),
             )
@@ -4841,15 +5521,24 @@ private fun List<BeatAccentType>.toJsonArray(): JSONArray {
     }
 }
 
-private fun Context.loadKeepScreenAwakeWhilePlaying(): Boolean {
-    return getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
-        .getBoolean(KEEP_SCREEN_AWAKE_WHILE_PLAYING_KEY, false)
+private fun Context.loadKeepScreenMode(): KeepScreenMode {
+    val preferences = getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+    if (preferences.contains(KEEP_SCREEN_MODE_KEY)) {
+        return KeepScreenMode.fromPersistedValue(
+            preferences.getInt(KEEP_SCREEN_MODE_KEY, KeepScreenMode.Playing.persistedValue),
+        )
+    }
+    return if (preferences.getBoolean(KEEP_SCREEN_AWAKE_WHILE_PLAYING_KEY, false)) {
+        KeepScreenMode.Playing
+    } else {
+        KeepScreenMode.WatchTimeout
+    }
 }
 
-private fun Context.saveKeepScreenAwakeWhilePlaying(keepScreenAwakeWhilePlaying: Boolean) {
+private fun Context.saveKeepScreenMode(keepScreenMode: KeepScreenMode) {
     getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
         .edit {
-            putBoolean(KEEP_SCREEN_AWAKE_WHILE_PLAYING_KEY, keepScreenAwakeWhilePlaying)
+            putInt(KEEP_SCREEN_MODE_KEY, keepScreenMode.persistedValue)
         }
 }
 
@@ -4979,16 +5668,22 @@ private fun Float?.formatCpuUsageCompactPercent(): String {
 private fun rememberAudioAnalysisState(
     enabled: Boolean,
     listenProfile: TunerListenProfile,
+    a4ReferenceHz: Int,
+    includeSpectrum: Boolean,
 ): AudioAnalysisState {
     var analysisState by remember { mutableStateOf(AudioAnalysisState()) }
 
-    LaunchedEffect(enabled, listenProfile) {
+    LaunchedEffect(enabled, listenProfile, a4ReferenceHz, includeSpectrum) {
         if (!enabled) {
             analysisState = AudioAnalysisState()
             return@LaunchedEffect
         }
 
-        runAudioAnalyzer(listenProfile) { nextState ->
+        runAudioAnalyzer(
+            listenProfile = listenProfile,
+            a4ReferenceHz = a4ReferenceHz,
+            includeSpectrum = includeSpectrum,
+        ) { nextState ->
             analysisState = nextState
         }
     }
@@ -4999,6 +5694,8 @@ private fun rememberAudioAnalysisState(
 @SuppressLint("MissingPermission")
 private suspend fun runAudioAnalyzer(
     listenProfile: TunerListenProfile,
+    a4ReferenceHz: Int,
+    includeSpectrum: Boolean,
     onAnalysis: (AudioAnalysisState) -> Unit,
 ) {
     val minBufferSize = AudioRecord.getMinBufferSize(
@@ -5035,9 +5732,18 @@ private suspend fun runAudioAnalyzer(
                 recorder.read(buffer, 0, buffer.size)
             }
             if (read > 0) {
-                onAnalysis(analyzeAudioFrame(buffer, read, listenProfile, pitchAverager))
+                onAnalysis(
+                    analyzeAudioFrame(
+                        buffer = buffer,
+                        read = read,
+                        listenProfile = listenProfile,
+                        pitchAverager = pitchAverager,
+                        a4ReferenceHz = a4ReferenceHz,
+                        includeSpectrum = includeSpectrum,
+                    ),
+                )
             }
-            delay(70L)
+            delay(AUDIO_ANALYSIS_INTERVAL_MS)
         }
     } finally {
         withContext(Dispatchers.IO) {
@@ -5052,6 +5758,8 @@ private fun analyzeAudioFrame(
     read: Int,
     listenProfile: TunerListenProfile,
     pitchAverager: TunerPitchAverager,
+    a4ReferenceHz: Int,
+    includeSpectrum: Boolean,
 ): AudioAnalysisState {
     val sampleCount = read.coerceIn(1, buffer.size)
     var sumSquares = 0.0
@@ -5061,7 +5769,7 @@ private fun analyzeAudioFrame(
     }
     val level = sqrt(sumSquares / sampleCount).toFloat().coerceIn(0f, 1f)
     val frequency = pitchAverager.average(detectPitchHz(buffer, sampleCount, listenProfile))
-    val note = frequency?.toNoteReading()
+    val note = frequency?.toNoteReading(a4ReferenceHz)
     val noteSummary = pitchAverager.noteSummary(note?.first)
 
     return AudioAnalysisState(
@@ -5071,7 +5779,7 @@ private fun analyzeAudioFrame(
         level = level,
         recentNotes = noteSummary.first,
         guessedKey = noteSummary.second,
-        spectrum = buildSpectrum(buffer, sampleCount),
+        spectrum = if (includeSpectrum) buildSpectrum(buffer, sampleCount) else emptyList(),
     )
 }
 
@@ -5226,10 +5934,11 @@ private fun centsBetween(
     return 1200f * log2(frequency / reference)
 }
 
-private fun Float.toNoteReading(): Pair<String, Int> {
+private fun Float.toNoteReading(a4ReferenceHz: Int): Pair<String, Int> {
+    val referenceHz = a4ReferenceHz.coerceIn(MIN_A4_REFERENCE_HZ, MAX_A4_REFERENCE_HZ).toFloat()
     val noteNames = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
-    val midi = (69f + 12f * log2(this / BAROQUE_REFERENCE_A4_HZ)).roundToInt()
-    val noteFrequency = BAROQUE_REFERENCE_A4_HZ * 2f.pow((midi - 69) / 12f)
+    val midi = (69f + 12f * log2(this / referenceHz)).roundToInt()
+    val noteFrequency = referenceHz * 2f.pow((midi - 69) / 12f)
     val cents = (1200f * log2(this / noteFrequency)).roundToInt()
     val octave = (midi / 12) - 1
     val name = "${noteNames[midi.floorMod(noteNames.size)]}$octave"
@@ -5245,10 +5954,47 @@ private fun buildSpectrum(
     sampleCount: Int,
 ): List<Float> {
     return List(SPECTRUM_BAR_COUNT) { index ->
-        val progress = if (SPECTRUM_BAR_COUNT <= 1) 0f else index.toFloat() / (SPECTRUM_BAR_COUNT - 1)
-        val frequency = 30f * (18_000f / 30f).pow(progress)
+        val frequency = spectrumFrequencyForIndex(index, SPECTRUM_BAR_COUNT)
         goertzelLevel(buffer, sampleCount, frequency).coerceIn(0f, 1f)
     }
+}
+
+private fun List<Float>.peakSpectrumReading(): SpectrumPeak? {
+    if (isEmpty()) return null
+
+    var peakIndex = 0
+    var peakLevel = 0f
+    forEachIndexed { index, level ->
+        if (level > peakLevel) {
+            peakIndex = index
+            peakLevel = level
+        }
+    }
+
+    if (peakLevel < 0.015f) return null
+
+    return SpectrumPeak(
+        frequencyHz = spectrumFrequencyForIndex(peakIndex, size),
+        relativeDb = peakLevel.toRelativeDb(),
+    )
+}
+
+private fun spectrumFrequencyForIndex(
+    index: Int,
+    count: Int,
+): Float {
+    val progress = if (count <= 1) 0f else index.toFloat() / (count - 1)
+    return 30f * (10_000f / 30f).pow(progress)
+}
+
+private fun Float.toRelativeDb(
+    floorDb: Float = -60f,
+): Float {
+    val level = coerceIn(0f, 1f)
+    if (level <= 0f) return floorDb
+
+    return (20f * (ln(level.toDouble()) / ln(10.0)).toFloat())
+        .coerceIn(floorDb, 0f)
 }
 
 private fun goertzelLevel(
@@ -5269,7 +6015,8 @@ private fun goertzelLevel(
     }
 
     val power = q1 * q1 + q2 * q2 - coefficient * q1 * q2
-    return (ln(power + 1.0).toFloat() / 5.2f).coerceIn(0f, 1f)
+    val magnitude = (sqrt(power).toFloat() * 2f / sampleCount).coerceAtLeast(0f)
+    return (magnitude * 10f).coerceIn(0f, 1f)
 }
 
 @Composable
@@ -5312,6 +6059,7 @@ private fun MetronomeState.hasSameNonVisualStateAs(other: MetronomeState): Boole
         accentBeat == other.accentBeat &&
         subdivisionCount == other.subdivisionCount &&
         beatAccentTypes == other.beatAccentTypes &&
+        accentIntensityMode == other.accentIntensityMode &&
         hapticsEnabled == other.hapticsEnabled &&
         beepEnabled == other.beepEnabled &&
         playlistIndex == other.playlistIndex &&
@@ -5338,45 +6086,6 @@ private fun MetronomeState.withLightClockVisualsFrom(previousState: MetronomeSta
     )
 }
 
-private fun Context.openWatchFacePicker() {
-    if (!isBpmMunkzWatchFaceInstalled()) {
-        Toast.makeText(
-            this,
-            "Install BPM Munkz Pulse watch face first",
-            Toast.LENGTH_LONG,
-        ).show()
-        return
-    }
-
-    val pickerIntents = listOf(
-        Intent(WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER),
-        Intent(Intent.ACTION_SET_WALLPAPER),
-    )
-
-    val didOpenPicker = pickerIntents.any { pickerIntent ->
-        runCatching {
-            startActivity(pickerIntent)
-        }.isSuccess
-    }
-
-    if (!didOpenPicker) {
-        Toast.makeText(
-            this,
-            "Choose BPM Munkz Pulse from watch faces",
-            Toast.LENGTH_SHORT,
-        ).show()
-    }
-}
-
-private fun Context.isBpmMunkzWatchFaceInstalled(): Boolean {
-    return runCatching {
-        packageManager.getPackageInfo(
-            WATCH_FACE_PACKAGE,
-            PackageManager.PackageInfoFlags.of(0),
-        )
-    }.isSuccess
-}
-
 @WearPreviewDevices
 @WearPreviewFontScales
 @Composable
@@ -5394,7 +6103,10 @@ fun SettingsPreview() {
                 appText = appTextFor(AppLanguage.English),
                 hapticsEnabled = false,
                 beepEnabled = false,
-                keepScreenAwakeWhilePlaying = false,
+                accentIntensityMode = AccentIntensityMode.Big,
+                accentIntensityRanges = defaultAccentIntensityRanges(),
+                a4ReferenceHz = DEFAULT_A4_REFERENCE_HZ,
+                keepScreenMode = KeepScreenMode.Playing,
                 mainColorArgb = DEFAULT_MAIN_COLOR,
                 backgroundColorArgb = DEFAULT_BACKGROUND_COLOR,
                 clockColorArgb = DEFAULT_CLOCK_COLOR,
@@ -5405,7 +6117,10 @@ fun SettingsPreview() {
                 appCpuUsagePercent = 2.4f,
                 onHapticsToggle = {},
                 onBeepToggle = {},
-                onKeepScreenAwakeWhilePlayingToggle = {},
+                onAccentIntensityModeChoice = {},
+                onAccentIntensityRangesChange = {},
+                onA4ReferenceHzChange = {},
+                onKeepScreenModeChoice = {},
                 onMainColorChoice = {},
                 onBackgroundColorChoice = {},
                 onClockColorChoice = {},

@@ -63,12 +63,60 @@ enum class BeatAccentType(val persistedValue: Int) {
     }
 }
 
+enum class AccentIntensityMode(val persistedValue: Int) {
+    Big(0),
+    Medium(1),
+    Little(2),
+    Silent(3);
+
+    fun volumePercentFor(
+        accentType: BeatAccentType,
+        ranges: List<AccentIntensityRange>,
+    ): Int {
+        if (accentType == BeatAccentType.Silent) return 0
+
+        return when (accentType) {
+            BeatAccentType.Big -> ranges.rangeFor(Big).valuePercent
+            BeatAccentType.Medium -> ranges.rangeFor(Medium).valuePercent
+            BeatAccentType.Small -> ranges.rangeFor(Little).valuePercent
+            BeatAccentType.Silent -> 0
+        }
+    }
+
+    fun hapticDurationMsFor(
+        accentType: BeatAccentType,
+        ranges: List<AccentIntensityRange>,
+    ): Long {
+        val volumePercent = volumePercentFor(accentType, ranges)
+        if (volumePercent <= 0) return 0L
+
+        return (volumePercent * 0.8f).toLong().coerceAtLeast(10L)
+    }
+
+    companion object {
+        fun fromPersistedValue(value: Int): AccentIntensityMode {
+            return entries.firstOrNull { it.persistedValue == value } ?: Big
+        }
+    }
+}
+
+data class AccentIntensityRange(
+    val maxPercent: Int,
+    val minPercent: Int,
+    val valuePercent: Int,
+) {
+    val midPercent: Int
+        get() = ((maxPercent + minPercent) / 2).coerceIn(0, 100)
+}
+
 data class MetronomeState(
     val bpm: Int = 64,
     val beatsPerMeasure: Int = 4,
     val accentBeat: Int = 1,
     val subdivisionCount: Int = 1,
     val beatAccentTypes: List<BeatAccentType> = defaultBeatAccentTypes(beatsPerMeasure, accentBeat),
+    val accentIntensityMode: AccentIntensityMode = AccentIntensityMode.Big,
+    val accentIntensityRanges: List<AccentIntensityRange> = defaultAccentIntensityRanges(),
     val hapticsEnabled: Boolean = false,
     val beepEnabled: Boolean = false,
     val currentBeatIndex: Int = 1,
@@ -93,17 +141,27 @@ class MetronomeService : Service() {
             )
         }
         .asCoroutineDispatcher()
-    private val feedbackDispatcher = Executors
+    private val toneDispatcher = Executors
         .newSingleThreadExecutor { runnable ->
             priorityThread(
-                name = "BPM-MetronomeFeedback",
+                name = "BPM-MetronomeTone",
+                priority = Process.THREAD_PRIORITY_AUDIO,
+                runnable = runnable,
+            )
+        }
+        .asCoroutineDispatcher()
+    private val hapticDispatcher = Executors
+        .newSingleThreadExecutor { runnable ->
+            priorityThread(
+                name = "BPM-MetronomeHaptic",
                 priority = Process.THREAD_PRIORITY_AUDIO,
                 runnable = runnable,
             )
         }
         .asCoroutineDispatcher()
     private val serviceScope = CoroutineScope(SupervisorJob() + timingDispatcher)
-    private val feedbackScope = CoroutineScope(SupervisorJob() + feedbackDispatcher)
+    private val toneScope = CoroutineScope(SupervisorJob() + toneDispatcher)
+    private val hapticScope = CoroutineScope(SupervisorJob() + hapticDispatcher)
     private val mutableState = MutableStateFlow(MetronomeState())
     private var metronomeJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -121,7 +179,7 @@ class MetronomeService : Service() {
         super.onCreate()
         mutableState.value = applicationContext.loadSavedRhythmState()
         vibrator = beatPulseVibrator()
-        tonePlayer = BeatTonePlayer.create()
+        tonePlayer = BeatTonePlayer()
     }
 
     override fun onBind(intent: Intent?): IBinder {
@@ -264,6 +322,18 @@ class MetronomeService : Service() {
         }
     }
 
+    fun setAccentIntensityMode(accentIntensityMode: AccentIntensityMode) {
+        updateConfig(restartBeat = false) {
+            it.copy(accentIntensityMode = accentIntensityMode)
+        }
+    }
+
+    fun setAccentIntensityRanges(accentIntensityRanges: List<AccentIntensityRange>) {
+        updateConfig(restartBeat = false) {
+            it.copy(accentIntensityRanges = accentIntensityRanges)
+        }
+    }
+
     fun setPlaylistItem(
         playlistIndex: Int,
         songIndex: Int,
@@ -272,6 +342,8 @@ class MetronomeService : Service() {
         accentBeat: Int = mutableState.value.accentBeat,
         subdivisionCount: Int = mutableState.value.subdivisionCount,
         beatAccentTypes: List<BeatAccentType> = mutableState.value.beatAccentTypes,
+        accentIntensityMode: AccentIntensityMode = mutableState.value.accentIntensityMode,
+        accentIntensityRanges: List<AccentIntensityRange> = mutableState.value.accentIntensityRanges,
         restartBeat: Boolean,
     ) {
         updateConfig(restartBeat = restartBeat) {
@@ -288,6 +360,8 @@ class MetronomeService : Service() {
                 accentBeat = safeBeatAccentTypes.primaryAccentBeat(),
                 subdivisionCount = subdivisionCount.toSupportedSubdivisionCount(),
                 beatAccentTypes = safeBeatAccentTypes,
+                accentIntensityMode = accentIntensityMode,
+                accentIntensityRanges = accentIntensityRanges,
             )
         }
     }
@@ -303,9 +377,11 @@ class MetronomeService : Service() {
         wakeLock?.releaseIfHeld()
         vibrator?.cancel()
         tonePlayer?.release()
-        feedbackScope.cancel()
+        toneScope.cancel()
+        hapticScope.cancel()
         serviceScope.cancel()
-        feedbackDispatcher.close()
+        toneDispatcher.close()
+        hapticDispatcher.close()
         timingDispatcher.close()
         super.onDestroy()
     }
@@ -342,22 +418,23 @@ class MetronomeService : Service() {
 
         metronomeJob = serviceScope.launch {
             var beat = mutableState.value.currentBeatIndex.coerceIn(1, mutableState.value.beatsPerMeasure)
-            var currentBeatAccentType = mutableState.value.beatAccentTypes.typeForBeat(beat)
-            var shouldLeadCurrentBeat = mutableState.value.beepEnabled && currentBeatAccentType.hasBeep
+            var nextBeatStartedAtMs = SystemClock.elapsedRealtime()
 
             while (isActive && mutableState.value.isRunning) {
+                delayUntilElapsedRealtime(nextBeatStartedAtMs)
+
                 val beatState = mutableState.value
                 val intervalMs = 60_000L / beatState.bpm
                 val subdivisionCount = beatState.subdivisionCount.toSupportedSubdivisionCount()
                 val subdivisionIntervalMs = intervalMs / subdivisionCount
                 val beatAccentType = beatState.beatAccentTypes.typeForBeat(beat)
-                var elapsedAfterBeatMs = 0L
+                val beatStartedAtMs = nextBeatStartedAtMs
 
-                if (shouldLeadCurrentBeat) {
-                    playBeep(currentBeatAccentType)
-                    delay(BEEP_LEAD_MS)
-                    shouldLeadCurrentBeat = false
-                }
+                BeatTimingTrace.startBeat(
+                    beat = beat,
+                    bpm = beatState.bpm,
+                    accentType = beatAccentType,
+                )
 
                 mutableState.update {
                     it.copy(
@@ -367,12 +444,23 @@ class MetronomeService : Service() {
                         currentSubdivisionIndex = 1,
                     )
                 }
+                BeatTimingTrace.mark("service beatFlash set")
                 if (beatState.hapticsEnabled) {
-                    pulseHaptic(beatAccentType)
+                    pulseHaptic(
+                        accentType = beatAccentType,
+                        accentIntensityMode = beatState.accentIntensityMode,
+                        accentIntensityRanges = beatState.accentIntensityRanges,
+                    )
+                }
+                if (beatState.beepEnabled) {
+                    playBeep(
+                        accentType = beatAccentType,
+                        accentIntensityMode = beatState.accentIntensityMode,
+                        accentIntensityRanges = beatState.accentIntensityRanges,
+                    )
                 }
 
-                delay(BEAT_FLASH_DURATION_MS)
-                elapsedAfterBeatMs += BEAT_FLASH_DURATION_MS
+                delayUntilElapsedRealtime(beatStartedAtMs + BEAT_FLASH_DURATION_MS)
                 mutableState.update {
                     it.copy(
                         beatFlash = false,
@@ -382,9 +470,7 @@ class MetronomeService : Service() {
 
                 for (subdivisionIndex in 2..subdivisionCount) {
                     val targetElapsedMs = (subdivisionIndex - 1) * subdivisionIntervalMs
-                    val waitUntilSubdivisionMs = (targetElapsedMs - elapsedAfterBeatMs).coerceAtLeast(0L)
-                    delay(waitUntilSubdivisionMs)
-                    elapsedAfterBeatMs += waitUntilSubdivisionMs
+                    delayUntilElapsedRealtime(beatStartedAtMs + targetElapsedMs)
                     mutableState.update {
                         it.copy(currentSubdivisionIndex = subdivisionIndex)
                     }
@@ -392,40 +478,40 @@ class MetronomeService : Service() {
 
                 val latestState = mutableState.value
                 val nextBeat = if (beat == latestState.beatsPerMeasure) 1 else beat + 1
-                val nextBeatAccentType = latestState.beatAccentTypes.typeForBeat(nextBeat)
-                val waitUntilNextBeatMs = (intervalMs - elapsedAfterBeatMs).coerceAtLeast(0L)
-                val shouldLeadBeep = latestState.beepEnabled && nextBeatAccentType.hasBeep
-
-                if (shouldLeadBeep && waitUntilNextBeatMs > BEEP_LEAD_MS) {
-                    delay(waitUntilNextBeatMs - BEEP_LEAD_MS)
-                    playBeep(nextBeatAccentType)
-                    delay(BEEP_LEAD_MS)
-                } else {
-                    delay(waitUntilNextBeatMs)
-                }
+                nextBeatStartedAtMs = beatStartedAtMs + intervalMs
 
                 beat = nextBeat
-                currentBeatAccentType = nextBeatAccentType
             }
         }
     }
 
-    private fun playBeep(accentType: BeatAccentType) {
+    private fun playBeep(
+        accentType: BeatAccentType,
+        accentIntensityMode: AccentIntensityMode,
+        accentIntensityRanges: List<AccentIntensityRange>,
+    ) {
         if (!accentType.hasBeep) return
 
-        feedbackScope.launch {
-            tonePlayer?.beep(accentType)
+        toneScope.launch {
+            tonePlayer?.beep(accentType, accentIntensityMode, accentIntensityRanges)
         }
     }
 
-    private fun pulseHaptic(accentType: BeatAccentType) {
-        feedbackScope.launch {
-            vibrator?.pulse(accentType)
+    private fun pulseHaptic(
+        accentType: BeatAccentType,
+        accentIntensityMode: AccentIntensityMode,
+        accentIntensityRanges: List<AccentIntensityRange>,
+    ) {
+        if (accentType == BeatAccentType.Silent) return
+
+        BeatTimingTrace.mark("haptic dispatch")
+        hapticScope.launch {
+            vibrator?.pulse(accentType, accentIntensityMode, accentIntensityRanges)
         }
     }
 
     private fun cancelHaptics() {
-        feedbackScope.launch {
+        hapticScope.launch {
             vibrator?.cancel()
         }
     }
@@ -519,6 +605,10 @@ class MetronomeService : Service() {
         private const val EXTRA_BEATS_PER_MEASURE = "beats_per_measure"
         private const val EXTRA_ACCENT_BEAT = "accent_beat"
         private const val EXTRA_SUBDIVISION_COUNT = "subdivision_count"
+        private const val EXTRA_ACCENT_INTENSITY_MODE = "accent_intensity_mode"
+        private const val EXTRA_ACCENT_INTENSITY_MAXES = "accent_intensity_maxes"
+        private const val EXTRA_ACCENT_INTENSITY_MINS = "accent_intensity_mins"
+        private const val EXTRA_ACCENT_INTENSITY_VALUES = "accent_intensity_values"
         private const val EXTRA_HAPTICS_ENABLED = "haptics_enabled"
         private const val EXTRA_BEEP_ENABLED = "beep_enabled"
         private const val EXTRA_CURRENT_BEAT_INDEX = "current_beat_index"
@@ -560,6 +650,8 @@ private fun MetronomeState.normalized(): MetronomeState {
         accentBeat = safeBeatAccentTypes.primaryAccentBeat(),
         subdivisionCount = safeSubdivisionCount,
         beatAccentTypes = safeBeatAccentTypes,
+        accentIntensityMode = accentIntensityMode,
+        accentIntensityRanges = accentIntensityRanges.normalizedAccentIntensityRanges(),
         currentBeatIndex = currentBeatIndex.coerceIn(1, safeBeatsPerMeasure),
         currentSubdivisionIndex = currentSubdivisionIndex.coerceIn(1, safeSubdivisionCount),
         playlistIndex = playlistIndex.coerceAtLeast(0),
@@ -583,6 +675,10 @@ private fun Intent.putMetronomeState(state: MetronomeState): Intent {
         .putExtra("accent_beat", state.accentBeat)
         .putExtra("subdivision_count", state.subdivisionCount)
         .putExtra("beat_accent_types", state.beatAccentTypes.toPersistedIntArray())
+        .putExtra("accent_intensity_mode", state.accentIntensityMode.persistedValue)
+        .putExtra("accent_intensity_maxes", state.accentIntensityRanges.toMaxPercentIntArray())
+        .putExtra("accent_intensity_mins", state.accentIntensityRanges.toMinPercentIntArray())
+        .putExtra("accent_intensity_values", state.accentIntensityRanges.toValuePercentIntArray())
         .putExtra("haptics_enabled", state.hapticsEnabled)
         .putExtra("beep_enabled", state.beepEnabled)
         .putExtra("current_beat_index", state.currentBeatIndex)
@@ -601,6 +697,10 @@ private fun Intent.readMetronomeState(fallback: MetronomeState): MetronomeState 
         beatAccentTypes = getIntArrayExtra("beat_accent_types")
             ?.map { BeatAccentType.fromPersistedValue(it) }
             ?: fallback.beatAccentTypes,
+        accentIntensityMode = AccentIntensityMode.fromPersistedValue(
+            getIntExtra("accent_intensity_mode", fallback.accentIntensityMode.persistedValue),
+        ),
+        accentIntensityRanges = readAccentIntensityRanges(fallback.accentIntensityRanges),
         hapticsEnabled = getBooleanExtra("haptics_enabled", fallback.hapticsEnabled),
         beepEnabled = getBooleanExtra("beep_enabled", fallback.beepEnabled),
         currentBeatIndex = getIntExtra("current_beat_index", fallback.currentBeatIndex),
@@ -612,6 +712,24 @@ private fun Intent.readMetronomeState(fallback: MetronomeState): MetronomeState 
         songIndex = getIntExtra("song_index", fallback.songIndex),
         playbackStartedAtMs = getLongExtra("playback_started_at_ms", fallback.playbackStartedAtMs),
     )
+}
+
+private fun Intent.readAccentIntensityRanges(
+    fallback: List<AccentIntensityRange>,
+): List<AccentIntensityRange> {
+    val maxes = getIntArrayExtra("accent_intensity_maxes")
+    val mins = getIntArrayExtra("accent_intensity_mins")
+    val values = getIntArrayExtra("accent_intensity_values")
+    if (maxes == null || mins == null) return fallback
+
+    return AccentIntensityMode.entries.mapIndexed { index, mode ->
+        val defaultRange = defaultAccentIntensityRange(mode)
+        AccentIntensityRange(
+            maxPercent = maxes.getOrNull(index) ?: defaultRange.maxPercent,
+            minPercent = mins.getOrNull(index) ?: defaultRange.minPercent,
+            valuePercent = values?.getOrNull(index) ?: defaultRange.valuePercent,
+        )
+    }.normalizedAccentIntensityRanges()
 }
 
 private fun priorityThread(
@@ -627,12 +745,21 @@ private fun priorityThread(
     }
 }
 
+private suspend fun delayUntilElapsedRealtime(targetMs: Long) {
+    val waitMs = targetMs - SystemClock.elapsedRealtime()
+    if (waitMs > 0L) {
+        delay(waitMs)
+    }
+}
+
 private const val RHYTHM_PREFS = "bpm_munkz_rhythm"
 private const val RHYTHM_BPM_KEY = "bpm"
 private const val RHYTHM_BEATS_PER_MEASURE_KEY = "beats_per_measure"
 private const val RHYTHM_ACCENT_BEAT_KEY = "accent_beat"
 private const val RHYTHM_SUBDIVISION_COUNT_KEY = "subdivision_count"
 private const val RHYTHM_BEAT_ACCENT_TYPES_KEY = "beat_accent_types"
+private const val RHYTHM_ACCENT_INTENSITY_MODE_KEY = "accent_intensity_mode"
+private const val RHYTHM_ACCENT_INTENSITY_RANGES_KEY = "accent_intensity_ranges"
 private const val RHYTHM_HAPTICS_ENABLED_KEY = "haptics_enabled"
 private const val RHYTHM_BEEP_ENABLED_KEY = "beep_enabled"
 private const val RHYTHM_PLAYLIST_INDEX_KEY = "playlist_index"
@@ -647,6 +774,11 @@ internal fun Context.loadSavedRhythmState(): MetronomeState {
         subdivisionCount = prefs.getInt(RHYTHM_SUBDIVISION_COUNT_KEY, 1),
         beatAccentTypes = prefs.getString(RHYTHM_BEAT_ACCENT_TYPES_KEY, null)
             .toBeatAccentTypes(),
+        accentIntensityMode = AccentIntensityMode.fromPersistedValue(
+            prefs.getInt(RHYTHM_ACCENT_INTENSITY_MODE_KEY, AccentIntensityMode.Big.persistedValue),
+        ),
+        accentIntensityRanges = prefs.getString(RHYTHM_ACCENT_INTENSITY_RANGES_KEY, null)
+            .toAccentIntensityRanges(),
         hapticsEnabled = prefs.getBoolean(RHYTHM_HAPTICS_ENABLED_KEY, false),
         beepEnabled = prefs.getBoolean(RHYTHM_BEEP_ENABLED_KEY, false),
         playlistIndex = prefs.getInt(RHYTHM_PLAYLIST_INDEX_KEY, 0),
@@ -664,6 +796,8 @@ internal fun Context.saveRhythmState(state: MetronomeState) {
         .putInt(RHYTHM_ACCENT_BEAT_KEY, normalizedState.accentBeat)
         .putInt(RHYTHM_SUBDIVISION_COUNT_KEY, normalizedState.subdivisionCount)
         .putString(RHYTHM_BEAT_ACCENT_TYPES_KEY, normalizedState.beatAccentTypes.toPersistedString())
+        .putInt(RHYTHM_ACCENT_INTENSITY_MODE_KEY, normalizedState.accentIntensityMode.persistedValue)
+        .putString(RHYTHM_ACCENT_INTENSITY_RANGES_KEY, normalizedState.accentIntensityRanges.toPersistedRangeString())
         .putBoolean(RHYTHM_HAPTICS_ENABLED_KEY, normalizedState.hapticsEnabled)
         .putBoolean(RHYTHM_BEEP_ENABLED_KEY, normalizedState.beepEnabled)
         .putInt(RHYTHM_PLAYLIST_INDEX_KEY, normalizedState.playlistIndex)
@@ -684,18 +818,22 @@ private fun PowerManager.WakeLock.releaseIfHeld() {
     }
 }
 
-private fun Vibrator.pulse(accentType: BeatAccentType) {
+private fun Vibrator.pulse(
+    accentType: BeatAccentType,
+    accentIntensityMode: AccentIntensityMode,
+    accentIntensityRanges: List<AccentIntensityRange>,
+) {
     if (!hasVibrator()) return
 
+    val durationMs = accentIntensityMode.hapticDurationMsFor(accentType, accentIntensityRanges)
+    if (durationMs <= 0L) return
+
+    BeatTimingTrace.mark("vibrate call")
     vibrate(
-        VibrationEffect.createOneShot(
-            when (accentType) {
-                BeatAccentType.Big -> 80
-                BeatAccentType.Medium -> 52
-                BeatAccentType.Small -> 30
-                BeatAccentType.Silent -> 15
-            },
-            VibrationEffect.DEFAULT_AMPLITUDE,
+        createBeatVibrationEffect(
+            accentType = accentType,
+            durationMs = durationMs,
+            hasAmplitudeControl = hasAmplitudeControl(),
         ),
         VibrationAttributes.Builder()
             .setUsage(VibrationAttributes.USAGE_ALARM)
@@ -703,12 +841,61 @@ private fun Vibrator.pulse(accentType: BeatAccentType) {
     )
 }
 
-private class BeatTonePlayer private constructor(
-    private val toneGenerator: ToneGenerator,
-) {
-    fun beep(accentType: BeatAccentType) {
+private fun createBeatVibrationEffect(
+    accentType: BeatAccentType,
+    durationMs: Long,
+    hasAmplitudeControl: Boolean,
+): VibrationEffect {
+    val safeDurationMs = durationMs.coerceAtLeast(1L)
+    if (!hasAmplitudeControl) {
+        return VibrationEffect.createOneShot(
+            safeDurationMs,
+            VibrationEffect.DEFAULT_AMPLITUDE,
+        )
+    }
+
+    val peakAmplitude = when (accentType) {
+        BeatAccentType.Big -> 220
+        BeatAccentType.Medium -> 172
+        BeatAccentType.Small -> 124
+        BeatAccentType.Silent -> 0
+    }
+    if (peakAmplitude <= 0) {
+        return VibrationEffect.createOneShot(1L, 1)
+    }
+
+    val attackMs = 4L.coerceAtMost(safeDurationMs)
+    val releaseMs = 6L.coerceAtMost((safeDurationMs - attackMs).coerceAtLeast(0L))
+    val sustainMs = (safeDurationMs - attackMs - releaseMs).coerceAtLeast(1L)
+    val startAmplitude = (peakAmplitude * 0.38f).toInt().coerceIn(1, 255)
+    val releaseAmplitude = (peakAmplitude * 0.28f).toInt().coerceIn(1, 255)
+
+    return VibrationEffect.createWaveform(
+        longArrayOf(0L, attackMs, sustainMs, releaseMs),
+        intArrayOf(0, startAmplitude, peakAmplitude, releaseAmplitude),
+        -1,
+    )
+}
+
+private class BeatTonePlayer {
+    private var fallbackToneGenerator: ToneGenerator? = null
+    private val toneGenerators = mutableMapOf<Int, ToneGenerator>()
+
+    fun beep(
+        accentType: BeatAccentType,
+        accentIntensityMode: AccentIntensityMode,
+        accentIntensityRanges: List<AccentIntensityRange>,
+    ) {
         if (!accentType.hasBeep) return
 
+        val volumePercent = accentIntensityMode.volumePercentFor(accentType, accentIntensityRanges)
+        if (volumePercent <= 0) return
+
+        val toneGenerator = toneGenerator(volumePercent)
+            ?: fallbackToneGenerator()
+            ?: return
+
+        BeatTimingTrace.mark("beep startTone call")
         toneGenerator.startTone(
             when (accentType) {
                 BeatAccentType.Big -> ToneGenerator.TONE_PROP_BEEP
@@ -719,22 +906,38 @@ private class BeatTonePlayer private constructor(
             when (accentType) {
                 BeatAccentType.Big -> BEEP_DURATION_MS
                 BeatAccentType.Medium -> 54
-                BeatAccentType.Small -> 42
+                BeatAccentType.Small -> 46
                 BeatAccentType.Silent -> BEEP_DURATION_MS
             },
         )
     }
 
     fun release() {
-        toneGenerator.release()
+        fallbackToneGenerator?.release()
+        fallbackToneGenerator = null
+        toneGenerators.values.forEach { toneGenerator ->
+            toneGenerator.release()
+        }
+        toneGenerators.clear()
     }
 
-    companion object {
-        fun create(): BeatTonePlayer? {
-            return runCatching {
-                BeatTonePlayer(ToneGenerator(AudioManager.STREAM_MUSIC, 60))
-            }.getOrNull()
-        }
+    private fun toneGenerator(volumePercent: Int): ToneGenerator? {
+        val safeVolumePercent = volumePercent.coerceIn(0, 100)
+        return toneGenerators[safeVolumePercent]
+            ?: runCatching {
+                ToneGenerator(AudioManager.STREAM_MUSIC, safeVolumePercent)
+            }.getOrNull()?.also { toneGenerator ->
+                toneGenerators[safeVolumePercent] = toneGenerator
+            }
+    }
+
+    private fun fallbackToneGenerator(): ToneGenerator? {
+        return fallbackToneGenerator
+            ?: runCatching {
+                ToneGenerator(AudioManager.STREAM_MUSIC, 80)
+            }.getOrNull()?.also { toneGenerator ->
+                fallbackToneGenerator = toneGenerator
+            }
     }
 }
 
@@ -787,4 +990,104 @@ private fun String?.toBeatAccentTypes(): List<BeatAccentType> {
     return split(",")
         .mapNotNull { rawValue -> rawValue.toIntOrNull() }
         .map { BeatAccentType.fromPersistedValue(it) }
+}
+
+internal fun defaultAccentIntensityRanges(): List<AccentIntensityRange> {
+    return AccentIntensityMode.entries.map { mode ->
+        defaultAccentIntensityRange(mode)
+    }
+}
+
+private fun defaultAccentIntensityRange(mode: AccentIntensityMode): AccentIntensityRange {
+    return when (mode) {
+        AccentIntensityMode.Big -> AccentIntensityRange(maxPercent = 100, minPercent = 80, valuePercent = 92)
+        AccentIntensityMode.Medium -> AccentIntensityRange(maxPercent = 80, minPercent = 60, valuePercent = 72)
+        AccentIntensityMode.Little -> AccentIntensityRange(maxPercent = 60, minPercent = 40, valuePercent = 52)
+        AccentIntensityMode.Silent -> AccentIntensityRange(maxPercent = 40, minPercent = 0, valuePercent = 20)
+    }
+}
+
+internal fun List<AccentIntensityRange>.rangeFor(mode: AccentIntensityMode): AccentIntensityRange {
+    return normalizedAccentIntensityRanges().getOrNull(mode.ordinal)
+        ?: defaultAccentIntensityRange(mode)
+}
+
+internal fun List<AccentIntensityRange>.withRangeFor(
+    mode: AccentIntensityMode,
+    range: AccentIntensityRange,
+): List<AccentIntensityRange> {
+    val normalizedRanges = normalizedAccentIntensityRanges()
+    return AccentIntensityMode.entries.mapIndexed { index, entry ->
+        if (entry == mode) range.normalized(entry) else normalizedRanges[index]
+    }
+}
+
+private fun List<AccentIntensityRange>.normalizedAccentIntensityRanges(): List<AccentIntensityRange> {
+    return AccentIntensityMode.entries.mapIndexed { index, mode ->
+        (getOrNull(index) ?: defaultAccentIntensityRange(mode)).normalized(mode)
+    }
+}
+
+private fun AccentIntensityRange.normalized(mode: AccentIntensityMode? = null): AccentIntensityRange {
+    if (mode == AccentIntensityMode.Silent) {
+        return AccentIntensityRange(
+            maxPercent = 40,
+            minPercent = 0,
+            valuePercent = valuePercent.coerceIn(0, 40),
+        )
+    }
+
+    val safeMax = maxPercent.coerceIn(0, 100)
+    val safeMin = minPercent.coerceIn(0, safeMax)
+    return AccentIntensityRange(
+        maxPercent = safeMax,
+        minPercent = safeMin,
+        valuePercent = valuePercent.coerceIn(safeMin, safeMax),
+    )
+}
+
+private fun List<AccentIntensityRange>.toMaxPercentIntArray(): IntArray {
+    return normalizedAccentIntensityRanges()
+        .map { it.maxPercent }
+        .toIntArray()
+}
+
+private fun List<AccentIntensityRange>.toMinPercentIntArray(): IntArray {
+    return normalizedAccentIntensityRanges()
+        .map { it.minPercent }
+        .toIntArray()
+}
+
+private fun List<AccentIntensityRange>.toValuePercentIntArray(): IntArray {
+    return normalizedAccentIntensityRanges()
+        .map { it.valuePercent }
+        .toIntArray()
+}
+
+private fun List<AccentIntensityRange>.toPersistedRangeString(): String {
+    return normalizedAccentIntensityRanges()
+        .joinToString(separator = ",") { range -> "${range.maxPercent}:${range.minPercent}:${range.valuePercent}" }
+}
+
+private fun String?.toAccentIntensityRanges(): List<AccentIntensityRange> {
+    if (isNullOrBlank()) return defaultAccentIntensityRanges()
+
+    val ranges = split(",")
+        .mapNotNull { rawRange ->
+            val parts = rawRange.split(":")
+            val maxPercent = parts.getOrNull(0)?.toIntOrNull()
+            val minPercent = parts.getOrNull(1)?.toIntOrNull()
+            val valuePercent = parts.getOrNull(2)?.toIntOrNull()
+            if (maxPercent == null || minPercent == null) {
+                null
+            } else {
+                AccentIntensityRange(
+                    maxPercent = maxPercent,
+                    minPercent = minPercent,
+                    valuePercent = valuePercent ?: ((maxPercent + minPercent) / 2),
+                )
+            }
+        }
+
+    return ranges.normalizedAccentIntensityRanges()
 }
