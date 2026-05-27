@@ -18,8 +18,15 @@ import android.os.IBinder
 import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.util.Log
+import android.view.Gravity
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.view.WindowManager
+import android.widget.EditText
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -43,6 +50,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -84,6 +92,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -99,6 +108,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.wear.compose.foundation.pager.HorizontalPager
@@ -120,7 +130,6 @@ import java.io.File
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
-import kotlin.math.ln
 import kotlin.math.log2
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -145,6 +154,7 @@ private const val SPECTRUM_BAR_COUNT = 28
 private const val AUDIO_UI_UPDATE_INTERVAL_MS = 140L
 private const val RHYTHM_VISUAL_MAX_DELAY_MS = 24L
 private const val RHYTHM_VISUAL_WAKE_AHEAD_MS = 6L
+private const val PAGER_TOUCH_VISUAL_QUIET_MS = 220L
 private const val DEFAULT_A4_REFERENCE_HZ = 440
 private const val MIN_A4_REFERENCE_HZ = 400
 private const val MAX_A4_REFERENCE_HZ = 480
@@ -286,15 +296,6 @@ private val MusicalKeyOptions = listOf(
     "Em",
     "Dm",
     "Gm",
-)
-
-private val PlaylistNameOptions = listOf(
-    "Set 1",
-    "Set 2",
-    "Practice",
-    "Live",
-    "Studio",
-    "Warmups",
 )
 
 private val SongNameOptions = listOf(
@@ -491,11 +492,10 @@ private data class AppText(
     val big: String,
     val edit: String,
     val editRhythm: String,
+    val deleteSong: String,
     val editPlaylist: String,
-    val listName: String,
     val newList: String,
     val song: String,
-    val songName: String,
     val addSong: String,
     val key: String,
     val note: String,
@@ -624,11 +624,10 @@ private fun appTextFor(language: AppLanguage): AppText {
             big = "BIG",
             edit = "Edit",
             editRhythm = "Edit Rhythm",
+            deleteSong = "Del",
             editPlaylist = "Edit Playlist",
-            listName = "List Name",
             newList = "New List",
             song = "Song",
-            songName = "Song Name",
             addSong = "Add Song",
             key = "Key",
             note = "Note",
@@ -681,11 +680,10 @@ private fun appTextFor(language: AppLanguage): AppText {
             big = "GRAN",
             edit = "Editar",
             editRhythm = "Editar ritmo",
+            deleteSong = "Borrar",
             editPlaylist = "Editar lista",
-            listName = "Lista",
             newList = "Nueva",
             song = "Cancion",
-            songName = "Cancion",
             addSong = "Agregar",
             key = "Tono",
             note = "Nota",
@@ -764,6 +762,8 @@ fun BeatPulseScreen() {
     val isPreview = LocalInspectionMode.current
     val activity = remember(context) { context.findActivity() }
     var metronomeService by remember { mutableStateOf<MetronomeService?>(null) }
+    var pointerIsDown by remember { mutableStateOf(false) }
+    var quietPulseVisualsUntilMs by remember { mutableLongStateOf(0L) }
     var metronomeState by remember(context, isPreview) {
         mutableStateOf(
             if (isPreview) {
@@ -998,8 +998,10 @@ fun BeatPulseScreen() {
         val currentPage = pagerState.currentPage
         val pagerIsMovingOrBetweenPages = pagerState.isScrollInProgress ||
             abs(pagerState.currentPageOffsetFraction) > 0.01f
+        val pointerIsPreparingGesture = pointerIsDown ||
+            SystemClock.elapsedRealtime() < quietPulseVisualsUntilMs
 
-        if (pagerIsMovingOrBetweenPages) {
+        if (pagerIsMovingOrBetweenPages || pointerIsPreparingGesture) {
             return state.withPulseVisualsFrom(metronomeState)
         }
 
@@ -1322,6 +1324,21 @@ fun BeatPulseScreen() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val hasPressedPointer = event.changes.any { it.pressed }
+                            if (hasPressedPointer != pointerIsDown) {
+                                pointerIsDown = hasPressedPointer
+                                if (hasPressedPointer) {
+                                    quietPulseVisualsUntilMs = SystemClock.elapsedRealtime() +
+                                        PAGER_TOUCH_VISUAL_QUIET_MS
+                                }
+                            }
+                        }
+                    }
+                }
                 .background(backgroundColor),
         ) {
             HorizontalPager(
@@ -1619,26 +1636,45 @@ fun BeatPulseScreen() {
                             restartBeat = isRunning,
                         )
                     },
-                    onPlaylistNameChange = { step ->
-                        playlists = playlists.updatePlaylist(playlistIndex) { playlist ->
-                            playlist.copy(
-                                name = cycleOption(
-                                    options = PlaylistNameOptions,
-                                    current = playlist.name,
-                                    step = step,
-                                ),
+                    onDeleteSong = {
+                        val activePlaylist = playlists[playlistIndex]
+                        if (activePlaylist.songs.size > 1) {
+                            val nextSongs = activePlaylist.songs.filterIndexed { index, _ -> index != songIndex }
+                            val nextSongIndex = songIndex.coerceAtMost(nextSongs.lastIndex)
+                            val nextPlaylists = playlists.updatePlaylist(playlistIndex) { playlist ->
+                                playlist.copy(songs = nextSongs)
+                            }
+                            playlists = nextPlaylists
+                            selectedSongIndexState.intValue = nextSongIndex
+                            applySongToMetronome(
+                                nextPlaylistIndex = playlistIndex,
+                                nextSongIndex = nextSongIndex,
+                                song = nextSongs[nextSongIndex],
+                                restartBeat = isRunning,
+                            )
+                        } else {
+                            val remainingPlaylists = playlists.filterIndexed { index, _ -> index != playlistIndex }
+                            val nextPlaylists = remainingPlaylists.ifEmpty { listOf(defaultSavedPlaylist(1)) }
+                            val nextPlaylistIndex = playlistIndex.coerceAtMost(nextPlaylists.lastIndex)
+                            playlists = nextPlaylists
+                            selectedPlaylistIndexState.intValue = nextPlaylistIndex
+                            selectedSongIndexState.intValue = 0
+                            applySongToMetronome(
+                                nextPlaylistIndex = nextPlaylistIndex,
+                                nextSongIndex = 0,
+                                song = nextPlaylists[nextPlaylistIndex].songs.first(),
+                                restartBeat = isRunning,
                             )
                         }
                     },
-                    onSongNameChange = { step ->
+                    onPlaylistNameEdit = { name ->
+                        playlists = playlists.updatePlaylist(playlistIndex) { playlist ->
+                            playlist.copy(name = name)
+                        }
+                    },
+                    onSongNameEdit = { name ->
                         updateCurrentSong { song ->
-                            song.copy(
-                                name = cycleOption(
-                                    options = SongNameOptions,
-                                    current = song.name,
-                                    step = step,
-                                ),
-                            )
+                            song.copy(name = name)
                         }
                     },
                     onSongBpmChange = { step ->
@@ -1676,6 +1712,11 @@ fun BeatPulseScreen() {
                                     step = step,
                                 ),
                             )
+                        }
+                    },
+                    onSongNoteEdit = { note ->
+                        updateCurrentSong { song ->
+                            song.copy(note = note)
                         }
                     },
                     onEditRhythm = {
@@ -2935,7 +2976,7 @@ private fun PlaylistClockPage(
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 16.dp),
+                .padding(top = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
@@ -3222,11 +3263,13 @@ private fun PlaylistEditorPopup(
     onPreviousSong: () -> Unit,
     onNextSong: () -> Unit,
     onAddSong: () -> Unit,
-    onPlaylistNameChange: (Int) -> Unit,
-    onSongNameChange: (Int) -> Unit,
+    onDeleteSong: () -> Unit,
+    onPlaylistNameEdit: (String) -> Unit,
+    onSongNameEdit: (String) -> Unit,
     onSongBpmChange: (Int) -> Unit,
     onSongKeyChange: (Int) -> Unit,
     onSongNoteChange: (Int) -> Unit,
+    onSongNoteEdit: (String) -> Unit,
     onEditRhythm: () -> Unit,
     onDone: () -> Unit,
 ) {
@@ -3242,11 +3285,13 @@ private fun PlaylistEditorPopup(
             onPreviousSong = onPreviousSong,
             onNextSong = onNextSong,
             onAddSong = onAddSong,
-            onPlaylistNameChange = onPlaylistNameChange,
-            onSongNameChange = onSongNameChange,
+            onDeleteSong = onDeleteSong,
+            onPlaylistNameEdit = onPlaylistNameEdit,
+            onSongNameEdit = onSongNameEdit,
             onSongBpmChange = onSongBpmChange,
             onSongKeyChange = onSongKeyChange,
             onSongNoteChange = onSongNoteChange,
+            onSongNoteEdit = onSongNoteEdit,
             onEditRhythm = onEditRhythm,
             onDone = onDone,
         )
@@ -3320,6 +3365,12 @@ private fun android.view.KeyEvent.isEditorDismissKey(): Boolean {
     }
 }
 
+private enum class PlaylistTextEditTarget {
+    PlaylistName,
+    SongName,
+    SongNote,
+}
+
 @Composable
 private fun PlaylistEditorPage(
     appText: AppText,
@@ -3332,32 +3383,35 @@ private fun PlaylistEditorPage(
     onPreviousSong: () -> Unit,
     onNextSong: () -> Unit,
     onAddSong: () -> Unit,
-    onPlaylistNameChange: (Int) -> Unit,
-    onSongNameChange: (Int) -> Unit,
+    onDeleteSong: () -> Unit,
+    onPlaylistNameEdit: (String) -> Unit,
+    onSongNameEdit: (String) -> Unit,
     onSongBpmChange: (Int) -> Unit,
     onSongKeyChange: (Int) -> Unit,
     onSongNoteChange: (Int) -> Unit,
+    onSongNoteEdit: (String) -> Unit,
     onEditRhythm: () -> Unit,
     onDone: () -> Unit,
 ) {
     val playlist = playlists[playlistIndex]
     val song = playlist.songs[songIndex]
+    var textEditTarget by remember { mutableStateOf<PlaylistTextEditTarget?>(null) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 2.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             modifier = Modifier
                 .verticalScroll(rememberScrollState())
-                .padding(vertical = 12.dp),
+                .padding(top = 20.dp, bottom = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 text = appText.editPlaylist,
-                fontSize = 16.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -3369,32 +3423,20 @@ private fun PlaylistEditorPage(
                 value = playlist.name,
                 onPrevious = onPreviousPlaylist,
                 onNext = onNextPlaylist,
+                onValueClick = { textEditTarget = PlaylistTextEditTarget.PlaylistName },
             )
 
-            TinyActionRow(
-                firstText = appText.listName,
-                firstClick = { onPlaylistNameChange(1) },
-                secondText = appText.newList,
-                secondClick = onAddPlaylist,
-            )
-
-            Spacer(modifier = Modifier.height(7.dp))
+            Spacer(modifier = Modifier.height(9.dp))
 
             ChoiceRow(
                 label = "${appText.song} ${songIndex + 1}/${playlist.songs.size}",
                 value = song.name,
                 onPrevious = onPreviousSong,
                 onNext = onNextSong,
+                onValueClick = { textEditTarget = PlaylistTextEditTarget.SongName },
             )
 
-            TinyActionRow(
-                firstText = appText.songName,
-                firstClick = { onSongNameChange(1) },
-                secondText = appText.addSong,
-                secondClick = onAddSong,
-            )
-
-            Spacer(modifier = Modifier.height(7.dp))
+            Spacer(modifier = Modifier.height(9.dp))
 
             EditValueRow(
                 label = "BPM",
@@ -3415,18 +3457,33 @@ private fun PlaylistEditorPage(
                 value = song.note,
                 onDecrease = { onSongNoteChange(-1) },
                 onIncrease = { onSongNoteChange(1) },
+                onValueClick = { textEditTarget = PlaylistTextEditTarget.SongNote },
             )
 
             Spacer(modifier = Modifier.height(7.dp))
 
-            SmallCommandButton(
-                text = appText.editRhythm,
-                modifier = Modifier
-                    .width(92.dp)
-                    .height(28.dp),
-                fontSize = 10.sp,
-                onClick = onEditRhythm,
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SmallCommandButton(
+                    text = appText.deleteSong,
+                    modifier = Modifier
+                        .width(54.dp)
+                        .height(28.dp),
+                    fontSize = 9.sp,
+                    onClick = onDeleteSong,
+                )
+
+                SmallCommandButton(
+                    text = appText.editRhythm,
+                    modifier = Modifier
+                        .width(92.dp)
+                        .height(28.dp),
+                    fontSize = 10.sp,
+                    onClick = onEditRhythm,
+                )
+            }
 
             Spacer(modifier = Modifier.height(4.dp))
 
@@ -3439,6 +3496,46 @@ private fun PlaylistEditorPage(
                 onClick = onDone,
             )
         }
+
+        CornerActionButton(
+            text = appText.newList,
+            modifier = Modifier.align(Alignment.TopStart),
+            mirrored = true,
+            onClick = onAddPlaylist,
+        )
+
+        CornerActionButton(
+            text = appText.addSong,
+            modifier = Modifier.align(Alignment.TopEnd),
+            onClick = onAddSong,
+        )
+
+        textEditTarget?.let { target ->
+            val title = when (target) {
+                PlaylistTextEditTarget.PlaylistName -> "Edit List"
+                PlaylistTextEditTarget.SongName -> "Edit Song"
+                PlaylistTextEditTarget.SongNote -> "Edit Note"
+            }
+            val editValue = when (target) {
+                PlaylistTextEditTarget.PlaylistName -> playlist.name
+                PlaylistTextEditTarget.SongName -> song.name
+                PlaylistTextEditTarget.SongNote -> song.note
+            }
+            PlaylistTextEditPopup(
+                title = title,
+                value = editValue,
+                doneText = appText.done,
+                onCancel = { textEditTarget = null },
+                onCommit = { nextValue ->
+                    when (target) {
+                        PlaylistTextEditTarget.PlaylistName -> onPlaylistNameEdit(nextValue)
+                        PlaylistTextEditTarget.SongName -> onSongNameEdit(nextValue)
+                        PlaylistTextEditTarget.SongNote -> onSongNoteEdit(nextValue)
+                    }
+                    textEditTarget = null
+                },
+            )
+        }
     }
 }
 
@@ -3448,6 +3545,7 @@ private fun ChoiceRow(
     value: String,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
+    onValueClick: () -> Unit,
 ) {
     Text(
         text = label,
@@ -3468,15 +3566,11 @@ private fun ChoiceRow(
             onClick = onPrevious,
         )
 
-        Text(
-            text = value,
-            modifier = Modifier.width(92.dp),
+        PillValueButton(
+            value = value,
+            modifier = Modifier.width(118.dp),
             fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
+            onClick = onValueClick,
         )
 
         SmallCommandButton(
@@ -3489,36 +3583,26 @@ private fun ChoiceRow(
 }
 
 @Composable
-private fun TinyActionRow(
-    firstText: String,
-    firstClick: () -> Unit,
-    secondText: String,
-    secondClick: () -> Unit,
+private fun CornerActionButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    mirrored: Boolean = false,
+    onClick: () -> Unit,
 ) {
-    Spacer(modifier = Modifier.height(4.dp))
-
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        SmallCommandButton(
-            text = firstText,
-            modifier = Modifier
-                .width(72.dp)
-                .height(26.dp),
-            fontSize = 8.sp,
-            onClick = firstClick,
-        )
-
-        SmallCommandButton(
-            text = secondText,
-            modifier = Modifier
-                .width(72.dp)
-                .height(26.dp),
-            fontSize = 8.sp,
-            onClick = secondClick,
-        )
-    }
+    SmallCommandButton(
+        text = text,
+        modifier = modifier
+            .padding(
+                top = 20.dp,
+                start = if (mirrored) 6.dp else 0.dp,
+                end = if (mirrored) 0.dp else 6.dp,
+            )
+            .rotate(if (mirrored) -38f else 38f)
+            .width(62.dp)
+            .height(24.dp),
+        fontSize = 8.sp,
+        onClick = onClick,
+    )
 }
 
 @Composable
@@ -3527,6 +3611,7 @@ private fun EditValueRow(
     value: String,
     onDecrease: () -> Unit,
     onIncrease: () -> Unit,
+    onValueClick: (() -> Unit)? = null,
 ) {
     Text(
         text = label,
@@ -3547,16 +3632,25 @@ private fun EditValueRow(
             onClick = onDecrease,
         )
 
-        Text(
-            text = value,
-            modifier = Modifier.width(92.dp),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-        )
+        if (onValueClick == null) {
+            Text(
+                text = value,
+                modifier = Modifier.width(118.dp),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        } else {
+            PillValueButton(
+                value = value,
+                modifier = Modifier.width(118.dp),
+                fontSize = 12.sp,
+                onClick = onValueClick,
+            )
+        }
 
         SmallCommandButton(
             text = "+",
@@ -3567,6 +3661,160 @@ private fun EditValueRow(
     }
 
     Spacer(modifier = Modifier.height(5.dp))
+}
+
+@Composable
+private fun PillValueButton(
+    value: String,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 12.sp,
+    onClick: () -> Unit,
+) {
+    SmallCommandButton(
+        text = value.ifBlank { "--" },
+        modifier = modifier.height(28.dp),
+        fontSize = fontSize,
+        onClick = onClick,
+    )
+}
+
+@Composable
+private fun PlaylistTextEditPopup(
+    title: String,
+    value: String,
+    doneText: String,
+    onCancel: () -> Unit,
+    onCommit: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    var draft by remember(title, value) { mutableStateOf(value) }
+    var editText by remember { mutableStateOf<EditText?>(null) }
+    val shape = RoundedCornerShape(50)
+    fun commitDraft() {
+        onCommit((editText?.text?.toString() ?: draft).trim())
+    }
+
+    BackHandler(onBack = onCancel)
+
+    LaunchedEffect(editText) {
+        val input = editText ?: return@LaunchedEffect
+        delay(120)
+        input.requestFocus()
+        input.setSelection(input.text?.length ?: 0)
+        val inputMethodManager = context.getSystemService(InputMethodManager::class.java)
+        inputMethodManager?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.9f))
+            .clickable(onClick = {}),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .width(170.dp)
+                .padding(horizontal = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = title,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Box(
+                modifier = Modifier
+                    .height(38.dp)
+                    .fillMaxWidth()
+                    .clip(shape)
+                    .background(MaterialTheme.colorScheme.primary, shape)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(34.dp),
+                    factory = { viewContext ->
+                        EditText(viewContext).apply {
+                            setSingleLine(true)
+                            setText(value)
+                            setSelectAllOnFocus(false)
+                            setSelection(text?.length ?: 0)
+                            setTextColor(android.graphics.Color.BLACK)
+                            setHintTextColor(android.graphics.Color.argb(160, 0, 0, 0))
+                            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+                            typeface = android.graphics.Typeface.DEFAULT_BOLD
+                            gravity = Gravity.CENTER
+                            background = null
+                            includeFontPadding = false
+                            inputType = InputType.TYPE_CLASS_TEXT or
+                                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+                                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                            imeOptions = EditorInfo.IME_ACTION_DONE
+                            setOnEditorActionListener { _, actionId, _ ->
+                                if (actionId == EditorInfo.IME_ACTION_DONE) {
+                                    commitDraft()
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            addTextChangedListener(object : TextWatcher {
+                                override fun beforeTextChanged(
+                                    text: CharSequence?,
+                                    start: Int,
+                                    count: Int,
+                                    after: Int,
+                                ) = Unit
+
+                                override fun onTextChanged(
+                                    text: CharSequence?,
+                                    start: Int,
+                                    before: Int,
+                                    count: Int,
+                                ) {
+                                    val next = text?.toString().orEmpty()
+                                    if (next.length > 48) {
+                                        val clipped = next.take(48)
+                                        setText(clipped)
+                                        setSelection(clipped.length)
+                                    } else {
+                                        draft = next
+                                    }
+                                }
+
+                                override fun afterTextChanged(text: Editable?) = Unit
+                            })
+                            editText = this
+                        }
+                    },
+                    update = { input ->
+                        if (input.text?.toString() != draft && !input.isFocused) {
+                            input.setText(draft)
+                            input.setSelection(input.text?.length ?: 0)
+                        }
+                    },
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            SmallCommandButton(
+                text = doneText,
+                modifier = Modifier
+                    .width(74.dp)
+                    .height(30.dp),
+                fontSize = 11.sp,
+                onClick = { commitDraft() },
+            )
+        }
+    }
 }
 
 @Composable
@@ -4698,6 +4946,7 @@ private fun SpectrumAnalyzerPage(
 
             AudioTempoReadout(
                 detectedBpm = audioAnalysisState.detectedTempoBpm,
+                modifier = Modifier.width(60.dp),
             )
 
             Text(
@@ -4739,7 +4988,7 @@ private fun SpectrumAnalyzerPage(
 @Composable
 private fun AudioTempoReadout(
     detectedBpm: Int?,
-    modifier: Modifier = Modifier.width(60.dp),
+    modifier: Modifier = Modifier,
     fontSize: TextUnit = 10.sp,
     numberFontSize: TextUnit = fontSize,
     color: Color = MaterialTheme.colorScheme.primary,
@@ -6352,22 +6601,24 @@ private fun scaleScore(
 }
 
 private fun KeyGuess.likelyChords(counts: FloatArray): List<String> {
-    return scale.offsets.mapIndexed { degreeIndex, offset ->
-        val chordRootIndex = (rootIndex + offset).floorMod(KeyNoteClasses.size)
-        val thirdIndex = (chordRootIndex + if (scale.chordQualities[degreeIndex] == "") 4 else 3)
-            .floorMod(KeyNoteClasses.size)
-        val fifthIndex = (chordRootIndex + if (scale.chordQualities[degreeIndex] == "dim") 6 else 7)
-            .floorMod(KeyNoteClasses.size)
-        val rootWeight = if (degreeIndex == 0) 1.5f else 1f
-        val score = (counts[chordRootIndex] * 3.2f * rootWeight) +
-            (counts[thirdIndex] * 2f) +
-            (counts[fifthIndex] * 2f)
-        "${KeyNoteClasses[chordRootIndex]}${scale.chordQualities[degreeIndex]}" to score
-    }
+    return scale.offsets.asSequence()
+        .mapIndexed { degreeIndex, offset ->
+            val chordRootIndex = (rootIndex + offset).floorMod(KeyNoteClasses.size)
+            val thirdIndex = (chordRootIndex + if (scale.chordQualities[degreeIndex] == "") 4 else 3)
+                .floorMod(KeyNoteClasses.size)
+            val fifthIndex = (chordRootIndex + if (scale.chordQualities[degreeIndex] == "dim") 6 else 7)
+                .floorMod(KeyNoteClasses.size)
+            val rootWeight = if (degreeIndex == 0) 1.5f else 1f
+            val score = (counts[chordRootIndex] * 3.2f * rootWeight) +
+                (counts[thirdIndex] * 2f) +
+                (counts[fifthIndex] * 2f)
+            "${KeyNoteClasses[chordRootIndex]}${scale.chordQualities[degreeIndex]}" to score
+        }
         .sortedByDescending { it.second }
         .map { it.first }
         .distinct()
         .take(3)
+        .toList()
 }
 
 private fun List<Float>.smartAverageOrNull(): Float? {
