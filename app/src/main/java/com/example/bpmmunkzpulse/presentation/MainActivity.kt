@@ -680,7 +680,7 @@ private fun appTextFor(language: AppLanguage): AppText {
             big = "GRAN",
             edit = "Editar",
             editRhythm = "Editar ritmo",
-            deleteSong = "Borrar",
+            deleteSong = " Borrar",
             editPlaylist = "Editar lista",
             newList = "Nueva",
             song = "Cancion",
@@ -880,8 +880,13 @@ fun BeatPulseScreen() {
             },
         )
     }
-    val selectedPlaylistIndexState = rememberSaveable { mutableIntStateOf(0) }
-    val selectedSongIndexState = rememberSaveable { mutableIntStateOf(0) }
+    val initialPlaylistIndex = metronomeState.playlistIndex.coerceIn(0, playlists.lastIndex)
+    val initialSongIndex = metronomeState.songIndex.coerceIn(
+        0,
+        playlists[initialPlaylistIndex].songs.lastIndex,
+    )
+    val selectedPlaylistIndexState = rememberSaveable { mutableIntStateOf(initialPlaylistIndex) }
+    val selectedSongIndexState = rememberSaveable { mutableIntStateOf(initialSongIndex) }
     var playlistEditorPopupOpen by rememberSaveable { mutableStateOf(false) }
     var playlistRhythmEditorPopupOpen by rememberSaveable { mutableStateOf(false) }
     var rhythmEditorPopupOpen by rememberSaveable { mutableStateOf(false) }
@@ -963,14 +968,12 @@ fun BeatPulseScreen() {
                     boundService?.let {
                         val serviceState = it.state.value
                         metronomeState = serviceState
-                        if (serviceState.isRunning) {
-                            val servicePlaylistIndex = serviceState.playlistIndex.coerceIn(0, playlists.lastIndex)
-                            selectedPlaylistIndexState.intValue = servicePlaylistIndex
-                            selectedSongIndexState.intValue = serviceState.songIndex.coerceIn(
-                                0,
-                                playlists[servicePlaylistIndex].songs.lastIndex,
-                            )
-                        }
+                        val servicePlaylistIndex = serviceState.playlistIndex.coerceIn(0, playlists.lastIndex)
+                        selectedPlaylistIndexState.intValue = servicePlaylistIndex
+                        selectedSongIndexState.intValue = serviceState.songIndex.coerceIn(
+                            0,
+                            playlists[servicePlaylistIndex].songs.lastIndex,
+                        )
                     }
                 }
 
@@ -1023,7 +1026,14 @@ fun BeatPulseScreen() {
             else -> state.withPulseVisualsFrom(metronomeState)
         }
 
-        return if (bigRingFlashMode == BigRingFlashMode.Off) {
+        val shouldShowGlobalRingPulse = bigRingFlashMode != BigRingFlashMode.Off &&
+            !playlistEditorPopupOpen &&
+            !tapTempoPopupOpen &&
+            !tunerOverlayOpen &&
+            !spectrumOverlayOpen &&
+            currentPage != SETTINGS_PAGE_INDEX
+
+        return if (!shouldShowGlobalRingPulse) {
             filteredState
         } else {
             filteredState.copy(
@@ -1039,6 +1049,7 @@ fun BeatPulseScreen() {
         playlistEditorPopupOpen,
         playlistRhythmEditorPopupOpen,
         rhythmEditorPopupOpen,
+        audioOverlayOpen,
         bigRingFlashMode,
     ) {
         metronomeService?.state?.collect { state ->
@@ -1062,6 +1073,7 @@ fun BeatPulseScreen() {
         playlistEditorPopupOpen,
         playlistRhythmEditorPopupOpen,
         rhythmEditorPopupOpen,
+        audioOverlayOpen,
         bigRingFlashMode,
     ) {
         snapshotFlow {
@@ -1160,6 +1172,17 @@ fun BeatPulseScreen() {
                 beatAccentTypes = rhythmState.beatAccentTypes,
                 accentIntensityMode = rhythmState.accentIntensityMode,
             )
+        }
+        playlists = nextPlaylists
+        if (!isPreview) {
+            context.saveSavedPlaylists(nextPlaylists)
+        }
+    }
+
+    fun saveCurrentBpmToSong() {
+        val currentBpm = (metronomeService?.state?.value ?: metronomeState).bpm
+        val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
+            song.copy(bpm = currentBpm)
         }
         playlists = nextPlaylists
         if (!isPreview) {
@@ -1799,7 +1822,10 @@ fun BeatPulseScreen() {
                     onIncrease = increaseBpm,
                     onIncreaseLarge = increaseBpmLarge,
                     onToggleRunning = toggleRunning,
-                    onDismiss = { tapTempoPopupOpen = false },
+                    onDismiss = {
+                        saveCurrentBpmToSong()
+                        tapTempoPopupOpen = false
+                    },
                 )
             }
         }
@@ -6783,6 +6809,7 @@ private fun MetronomeState.hasSameNonVisualStateAs(other: MetronomeState): Boole
         subdivisionCount == other.subdivisionCount &&
         beatAccentTypes == other.beatAccentTypes &&
         accentIntensityMode == other.accentIntensityMode &&
+        accentIntensityRanges == other.accentIntensityRanges &&
         hapticsEnabled == other.hapticsEnabled &&
         beepEnabled == other.beepEnabled &&
         playlistIndex == other.playlistIndex &&

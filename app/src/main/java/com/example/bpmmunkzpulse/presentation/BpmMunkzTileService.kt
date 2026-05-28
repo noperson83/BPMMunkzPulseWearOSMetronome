@@ -31,8 +31,9 @@ import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders.Tile
 import androidx.wear.tiles.TileService
 import com.example.bpmmunkzpulse.R
-import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 
 private const val TILE_RESOURCES_VERSION = "5"
 private const val TILE_LOGO_RESOURCE_ID = "bpm_munkz_tile_logo"
@@ -50,7 +51,7 @@ class BpmMunkzTileService : TileService() {
         )
         val openLabel = getString(R.string.tile_open)
 
-        return Futures.immediateFuture(
+        return immediateFuture(
             Tile.Builder()
                 .setResourcesVersion(TILE_RESOURCES_VERSION)
                 .setTileTimeline(
@@ -137,7 +138,7 @@ class BpmMunkzTileService : TileService() {
     override fun onTileResourcesRequest(
         requestParams: RequestBuilders.ResourcesRequest,
     ): ListenableFuture<Resources> =
-        Futures.immediateFuture(
+        immediateFuture(
             Resources.Builder()
                 .setVersion(TILE_RESOURCES_VERSION)
                 .addIdToImageMapping(TILE_LOGO_RESOURCE_ID, tileLogoResource())
@@ -153,3 +154,23 @@ private fun tileLogoResource(): ImageResource =
                 .build(),
         )
         .build()
+
+private fun <T> immediateFuture(value: T): ListenableFuture<T> = ImmediateListenableFuture(value)
+
+private class ImmediateListenableFuture<T>(
+    private val value: T,
+) : ListenableFuture<T> {
+    override fun addListener(listener: Runnable, executor: Executor) {
+        executor.execute(listener)
+    }
+
+    override fun cancel(mayInterruptIfRunning: Boolean): Boolean = false
+
+    override fun isCancelled(): Boolean = false
+
+    override fun isDone(): Boolean = true
+
+    override fun get(): T = value
+
+    override fun get(timeout: Long, unit: TimeUnit): T = value
+}
