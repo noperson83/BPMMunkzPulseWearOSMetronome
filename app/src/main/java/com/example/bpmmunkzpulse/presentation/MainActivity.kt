@@ -37,6 +37,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -131,6 +132,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.log2
+import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -154,7 +156,7 @@ private const val SPECTRUM_BAR_COUNT = 28
 private const val AUDIO_UI_UPDATE_INTERVAL_MS = 140L
 private const val RHYTHM_VISUAL_MAX_DELAY_MS = 24L
 private const val RHYTHM_VISUAL_WAKE_AHEAD_MS = 6L
-private const val PAGER_TOUCH_VISUAL_QUIET_MS = 220L
+private const val PAGER_TOUCH_VISUAL_QUIET_MS = 900L
 private const val DEFAULT_A4_REFERENCE_HZ = 440
 private const val MIN_A4_REFERENCE_HZ = 400
 private const val MAX_A4_REFERENCE_HZ = 480
@@ -461,6 +463,7 @@ private data class AppText(
     val listen: String,
     val keyGuess: String,
     val saveKey: String,
+    val saveBpm: String,
     val rhythm: String,
     val timeSignature: String,
     val subdivision: String,
@@ -521,7 +524,7 @@ private val ClockImageChoices = listOf(
 
 private val BigRingModeChoices = listOf(
     BigRingModeChoice(BigRingFlashMode.All, "All", "Todo"),
-    BigRingModeChoice(BigRingFlashMode.Big, "Big", "Big"),
+    BigRingModeChoice(BigRingFlashMode.Big, "Big", "Gran"),
     BigRingModeChoice(BigRingFlashMode.Off, "Off", "Off"),
 )
 
@@ -593,6 +596,7 @@ private fun appTextFor(language: AppLanguage): AppText {
             listen = "Listen",
             keyGuess = "Key",
             saveKey = "Save Key",
+            saveBpm = "Save BPM",
             rhythm = "Pulse",
             timeSignature = "Time Signature",
             subdivision = "Sub Divisions",
@@ -619,7 +623,7 @@ private fun appTextFor(language: AppLanguage): AppText {
             clock = "Clock",
             clockImage = "Clock image",
             handColor = "Clock Hand",
-            bigRing = "Big ring",
+            bigRing = "Tap ring",
             language = "Language",
             big = "BIG",
             edit = "Edit",
@@ -649,6 +653,7 @@ private fun appTextFor(language: AppLanguage): AppText {
             listen = "Escuchar",
             keyGuess = "Tono",
             saveKey = "Guardar tono",
+            saveBpm = "Guardar BPM",
             rhythm = "Pulso",
             timeSignature = "Compas",
             subdivision = "Sub Divisiones",
@@ -675,7 +680,7 @@ private fun appTextFor(language: AppLanguage): AppText {
             clock = "Reloj",
             clockImage = "Imagen reloj",
             handColor = "Mano de reloj",
-            bigRing = "Aro grande",
+            bigRing = "Aro tempo",
             language = "Idioma",
             big = "GRAN",
             edit = "Editar",
@@ -995,14 +1000,33 @@ fun BeatPulseScreen() {
         }
     }
 
+    fun pagerIsMovingOrBetweenPages(): Boolean {
+        return pagerState.isScrollInProgress ||
+            abs(pagerState.currentPageOffsetFraction) > 0.01f
+    }
+
+    fun pointerIsPreparingGesture(): Boolean {
+        return pointerIsDown ||
+            SystemClock.elapsedRealtime() < quietPulseVisualsUntilMs
+    }
+
+    fun shouldShowTapTempoPageBigRing(): Boolean {
+        return bigRingFlashMode != BigRingFlashMode.Off &&
+            pagerState.currentPage == TAP_TEMPO_FREE_PAGE_INDEX &&
+            !pagerIsMovingOrBetweenPages() &&
+            !pointerIsPreparingGesture() &&
+            !tapTempoPopupOpen &&
+            !tunerOverlayOpen &&
+            !spectrumOverlayOpen &&
+            !playlistEditorPopupOpen
+    }
+
     fun filterMetronomeStateForVisibleUi(state: MetronomeState): MetronomeState {
         if (!state.isRunning) return state
 
         val currentPage = pagerState.currentPage
-        val pagerIsMovingOrBetweenPages = pagerState.isScrollInProgress ||
-            abs(pagerState.currentPageOffsetFraction) > 0.01f
-        val pointerIsPreparingGesture = pointerIsDown ||
-            SystemClock.elapsedRealtime() < quietPulseVisualsUntilMs
+        val pagerIsMovingOrBetweenPages = pagerIsMovingOrBetweenPages()
+        val pointerIsPreparingGesture = pointerIsPreparingGesture()
 
         if (pagerIsMovingOrBetweenPages || pointerIsPreparingGesture) {
             return state.withPulseVisualsFrom(metronomeState)
@@ -1026,21 +1050,7 @@ fun BeatPulseScreen() {
             else -> state.withPulseVisualsFrom(metronomeState)
         }
 
-        val shouldShowGlobalRingPulse = bigRingFlashMode != BigRingFlashMode.Off &&
-            !playlistEditorPopupOpen &&
-            !tapTempoPopupOpen &&
-            !tunerOverlayOpen &&
-            !spectrumOverlayOpen &&
-            currentPage != SETTINGS_PAGE_INDEX
-
-        return if (!shouldShowGlobalRingPulse) {
-            filteredState
-        } else {
-            filteredState.copy(
-                beatFlash = state.beatFlash,
-                flashingBeat = state.flashingBeat,
-            )
-        }
+        return filteredState
     }
 
     LaunchedEffect(
@@ -1054,7 +1064,7 @@ fun BeatPulseScreen() {
     ) {
         metronomeService?.state?.collect { state ->
             val nextState = filterMetronomeStateForVisibleUi(state)
-            val shouldUpdateRingVisuals = bigRingFlashMode != BigRingFlashMode.Off &&
+            val shouldUpdateRingVisuals = shouldShowTapTempoPageBigRing() &&
                 nextState.hasDifferentPulseVisualsFrom(metronomeState)
             val shouldUpdateNow = !state.isRunning ||
                 !nextState.hasSameNonVisualStateAs(metronomeState) ||
@@ -1082,7 +1092,7 @@ fun BeatPulseScreen() {
             if (!pagerIsMovingOrBetweenPages) {
                 metronomeService?.state?.value?.let { state ->
                     val nextState = filterMetronomeStateForVisibleUi(state)
-                    val shouldUpdateRingVisuals = bigRingFlashMode != BigRingFlashMode.Off &&
+                    val shouldUpdateRingVisuals = shouldShowTapTempoPageBigRing() &&
                         nextState.hasDifferentPulseVisualsFrom(metronomeState)
                     if (
                         (
@@ -1183,6 +1193,18 @@ fun BeatPulseScreen() {
         val currentBpm = (metronomeService?.state?.value ?: metronomeState).bpm
         val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
             song.copy(bpm = currentBpm)
+        }
+        playlists = nextPlaylists
+        if (!isPreview) {
+            context.saveSavedPlaylists(nextPlaylists)
+        }
+    }
+
+    fun saveDetectedBpmToSong(detectedBpm: Int) {
+        val nextBpm = detectedBpm.coerceIn(MIN_BPM, MAX_BPM)
+        metronomeService?.setBpm(nextBpm, restartBeat = isRunning)
+        val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
+            song.copy(bpm = nextBpm)
         }
         playlists = nextPlaylists
         if (!isPreview) {
@@ -1364,6 +1386,15 @@ fun BeatPulseScreen() {
                 }
                 .background(backgroundColor),
         ) {
+            val tapTempoPageBigRingVisible = shouldShowTapTempoPageBigRing()
+            BigPulseRingOverlay(
+                beatFlash = beatFlash && tapTempoPageBigRingVisible,
+                flashingAccentType = beatAccentTypes.typeForBeat(flashingBeat),
+                bigRingFlashMode = bigRingFlashMode,
+                colorArgb = bigPulseRingColorArgb,
+                modifier = Modifier.fillMaxSize(),
+            )
+
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxSize(),
@@ -1398,7 +1429,11 @@ fun BeatPulseScreen() {
                         isRunning = isRunning,
                         beatClockStartedAtMs = beatClockStartedAtMs,
                         playbackStartedAtMs = playbackStartedAtMs,
-                        beatVisualsEnabled = !pagerState.isScrollInProgress &&
+                        beatVisualsEnabled = pagerState.currentPage == RHYTHM_PAGE_INDEX &&
+                            !pagerState.isScrollInProgress &&
+                            abs(pagerState.currentPageOffsetFraction) <= 0.01f,
+                        beatRingVisible = pagerState.currentPage == RHYTHM_PAGE_INDEX &&
+                            !pagerState.isScrollInProgress &&
                             abs(pagerState.currentPageOffsetFraction) <= 0.01f,
                         onEditRhythm = {
                             rhythmEditorPopupOpen = true
@@ -1552,14 +1587,6 @@ fun BeatPulseScreen() {
                 }
             }
 
-            BigPulseRingOverlay(
-                beatFlash = beatFlash,
-                flashingAccentType = beatAccentTypes.typeForBeat(flashingBeat),
-                bigRingFlashMode = bigRingFlashMode,
-                colorArgb = bigPulseRingColorArgb,
-                modifier = Modifier.fillMaxSize(),
-            )
-
             CpuPercentOverlay(
                 cpuUsagePercent = appCpuUsagePercent,
                 modifier = Modifier.align(Alignment.TopStart),
@@ -1571,45 +1598,6 @@ fun BeatPulseScreen() {
                     onStop = toggleRunning,
                     modifier = Modifier.align(Alignment.TopEnd),
                 )
-            }
-
-            if (tunerOverlayOpen) {
-                AnalyzerOverlay(
-                    closeText = appText.done,
-                    onClose = { tunerOverlayOpen = false },
-                ) {
-                    TunerPage(
-                        appText = appText,
-                        appLanguage = appLanguage,
-                        audioAnalysisState = audioAnalysisState,
-                        selectedProfile = tunerListenProfile,
-                        micPermissionGranted = micPermissionGranted,
-                        onProfileChoice = { tunerListenProfile = it },
-                        onSaveKey = { guessedKey ->
-                            updateCurrentSong { song -> song.copy(musicalKey = guessedKey) }
-                        },
-                        onRequestMicPermission = {
-                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        },
-                    )
-                }
-            }
-
-            if (spectrumOverlayOpen) {
-                AnalyzerOverlay(
-                    closeText = appText.done,
-                    onClose = { spectrumOverlayOpen = false },
-                ) {
-                    SpectrumAnalyzerPage(
-                        appText = appText,
-                        audioAnalysisState = audioAnalysisState,
-                        a4ReferenceHz = a4ReferenceHz,
-                        micPermissionGranted = micPermissionGranted,
-                        onRequestMicPermission = {
-                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        },
-                    )
-                }
             }
 
             if (!audioOverlayOpen && pagerState.currentPage != MAIN_PAGE_INDEX && pagerState.currentPage != RHYTHM_PAGE_INDEX) {
@@ -1828,6 +1816,48 @@ fun BeatPulseScreen() {
                     },
                 )
             }
+
+            if (tunerOverlayOpen) {
+                AnalyzerOverlay(
+                    closeText = appText.done,
+                    onClose = { tunerOverlayOpen = false },
+                ) {
+                    TunerPage(
+                        appText = appText,
+                        appLanguage = appLanguage,
+                        audioAnalysisState = audioAnalysisState,
+                        selectedProfile = tunerListenProfile,
+                        micPermissionGranted = micPermissionGranted,
+                        onProfileChoice = { tunerListenProfile = it },
+                        onSaveKey = { guessedKey ->
+                            updateCurrentSong { song -> song.copy(musicalKey = guessedKey) }
+                        },
+                        onSaveBpm = { detectedBpm ->
+                            saveDetectedBpmToSong(detectedBpm)
+                        },
+                        onRequestMicPermission = {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                    )
+                }
+            }
+
+            if (spectrumOverlayOpen) {
+                AnalyzerOverlay(
+                    closeText = appText.done,
+                    onClose = { spectrumOverlayOpen = false },
+                ) {
+                    SpectrumAnalyzerPage(
+                        appText = appText,
+                        audioAnalysisState = audioAnalysisState,
+                        a4ReferenceHz = a4ReferenceHz,
+                        micPermissionGranted = micPermissionGranted,
+                        onRequestMicPermission = {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -2034,6 +2064,7 @@ private fun RhythmSetupPage(
     beatClockStartedAtMs: Long,
     playbackStartedAtMs: Long,
     beatVisualsEnabled: Boolean,
+    beatRingVisible: Boolean,
     onEditRhythm: () -> Unit,
     onToggleRunning: () -> Unit,
     onBpmClick: () -> Unit,
@@ -2069,6 +2100,7 @@ private fun RhythmSetupPage(
             beatFlash = beatVisualState.beatFlash,
             isRunning = isRunning,
             playbackStartedAtMs = playbackStartedAtMs,
+            beatRingVisible = beatRingVisible,
             modifier = Modifier.fillMaxSize(),
             onBpmClick = onBpmClick,
             onEdit = onEditRhythm,
@@ -2091,6 +2123,7 @@ private fun RhythmLiveCanvas(
     beatFlash: Boolean,
     isRunning: Boolean,
     playbackStartedAtMs: Long,
+    beatRingVisible: Boolean = true,
     modifier: Modifier = Modifier,
     onBpmClick: () -> Unit,
     onEdit: () -> Unit,
@@ -2102,9 +2135,10 @@ private fun RhythmLiveCanvas(
         beatsPerMeasure = beatsPerMeasure,
         beatAccentTypes = beatAccentTypes,
         currentBeatIndex = currentBeatIndex,
-        beatFlash = beatFlash,
+        beatFlash = beatRingVisible && beatFlash,
         modifier = modifier,
         centerContentWidth = 192.dp,
+        beatRingVisible = beatRingVisible,
         onBeatAccentTypeCycle = null,
         bottomContent = {
             RhythmElapsedTimer(
@@ -2131,14 +2165,14 @@ private fun RhythmLiveCanvas(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
-                    modifier = Modifier.width(150.dp),
+                    modifier = Modifier.width(128.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     GlassCommandButton(
                         text = appText.tuner,
                         modifier = Modifier
-                            .width(40.dp)
+                            .width(34.dp)
                             .height(21.dp),
                         fontSize = 8.sp,
                         selected = false,
@@ -2148,7 +2182,7 @@ private fun RhythmLiveCanvas(
 
                     Text(
                         text = "$currentBeatIndex/$beatsPerMeasure",
-                        modifier = Modifier.width(68.dp),
+                        modifier = Modifier.width(60.dp),
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground,
@@ -2158,7 +2192,7 @@ private fun RhythmLiveCanvas(
                     GlassCommandButton(
                         text = "Spect",
                         modifier = Modifier
-                            .width(40.dp)
+                            .width(34.dp)
                             .height(21.dp),
                         fontSize = 8.sp,
                         selected = false,
@@ -2544,6 +2578,7 @@ private fun BigPulseCircleSelector(
     beatFlash: Boolean,
     modifier: Modifier = Modifier,
     centerContentWidth: Dp = 128.dp,
+    beatRingVisible: Boolean = true,
     onBeatAccentTypeCycle: ((Int) -> Unit)?,
     bottomContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
@@ -2565,16 +2600,18 @@ private fun BigPulseCircleSelector(
         val ringSize = if (maxWidth < maxHeight) maxWidth else maxHeight
         val radius = (ringSize / 2) - (hitSize / 2) - 2.dp
 
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val strokeWidth = 1.dp.toPx()
-            val ringRadius = ((size.minDimension / 2f) - (hitSize.toPx() / 2f) - 2.dp.toPx())
-                .coerceAtLeast(0f)
-            drawCircle(
-                color = circleColor,
-                radius = ringRadius,
-                center = Offset(size.width / 2f, size.height / 2f),
-                style = Stroke(width = strokeWidth),
-            )
+        if (beatRingVisible) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val strokeWidth = 1.dp.toPx()
+                val ringRadius = ((size.minDimension / 2f) - (hitSize.toPx() / 2f) - 2.dp.toPx())
+                    .coerceAtLeast(0f)
+                drawCircle(
+                    color = circleColor,
+                    radius = ringRadius,
+                    center = Offset(size.width / 2f, size.height / 2f),
+                    style = Stroke(width = strokeWidth),
+                )
+            }
         }
 
         Column(
@@ -2585,41 +2622,43 @@ private fun BigPulseCircleSelector(
             content()
         }
 
-        (1..rightCount).forEach { index ->
-            val angle = splitCircleAngle(index, rightCount, rightSide = true)
-            BeatAccentDotButton(
-                accentType = beatAccentTypes.typeForBeat(index),
-                beatFlash = beatFlash && currentBeatIndex == index,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(
-                        x = (maxWidth / 2) + (radius * cos(angle).toFloat()) - (hitSize / 2),
-                        y = (maxHeight / 2) + (radius * sin(angle).toFloat()) - (hitSize / 2),
-                    )
-                    .size(hitSize),
-                onClick = onBeatAccentTypeCycle?.let { onBeatChoice ->
-                    { onBeatChoice(index) }
-                },
-            )
-        }
+        if (beatRingVisible) {
+            (1..rightCount).forEach { index ->
+                val angle = splitCircleAngle(index, rightCount, rightSide = true)
+                BeatAccentDotButton(
+                    accentType = beatAccentTypes.typeForBeat(index),
+                    beatFlash = beatFlash && currentBeatIndex == index,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset(
+                            x = (maxWidth / 2) + (radius * cos(angle).toFloat()) - (hitSize / 2),
+                            y = (maxHeight / 2) + (radius * sin(angle).toFloat()) - (hitSize / 2),
+                        )
+                        .size(hitSize),
+                    onClick = onBeatAccentTypeCycle?.let { onBeatChoice ->
+                        { onBeatChoice(index) }
+                    },
+                )
+            }
 
-        (1..leftCount).forEach { index ->
-            val beat = rightCount + index
-            val angle = splitCircleAngle(index, leftCount, rightSide = false)
-            BeatAccentDotButton(
-                accentType = beatAccentTypes.typeForBeat(beat),
-                beatFlash = beatFlash && currentBeatIndex == beat,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(
-                        x = (maxWidth / 2) + (radius * cos(angle).toFloat()) - (hitSize / 2),
-                        y = (maxHeight / 2) + (radius * sin(angle).toFloat()) - (hitSize / 2),
-                    )
-                    .size(hitSize),
-                onClick = onBeatAccentTypeCycle?.let { onBeatChoice ->
-                    { onBeatChoice(beat) }
-                },
-            )
+            (1..leftCount).forEach { index ->
+                val beat = rightCount + index
+                val angle = splitCircleAngle(index, leftCount, rightSide = false)
+                BeatAccentDotButton(
+                    accentType = beatAccentTypes.typeForBeat(beat),
+                    beatFlash = beatFlash && currentBeatIndex == beat,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset(
+                            x = (maxWidth / 2) + (radius * cos(angle).toFloat()) - (hitSize / 2),
+                            y = (maxHeight / 2) + (radius * sin(angle).toFloat()) - (hitSize / 2),
+                        )
+                        .size(hitSize),
+                    onClick = onBeatAccentTypeCycle?.let { onBeatChoice ->
+                        { onBeatChoice(beat) }
+                    },
+                )
+            }
         }
 
         bottomContent?.let { footer ->
@@ -2827,6 +2866,12 @@ private fun rememberRhythmBeatVisualState(
         }
 
         if (!animationEnabled) {
+            beatVisualState = currentRhythmBeatVisualState(
+                bpm = bpm,
+                beatsPerMeasure = beatsPerMeasure,
+                subdivisionCount = subdivisionCount,
+                beatClockStartedAtMs = beatClockStartedAtMs,
+            )
             return@LaunchedEffect
         }
 
@@ -3029,8 +3074,8 @@ private fun PlaylistClockPage(
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 46.dp)
-                .width(184.dp)
+                .padding(top = 46.dp,end = 12.dp)
+                .width(180.dp)
                 .height(26.dp),
         ) {
             Box(
@@ -3422,6 +3467,7 @@ private fun PlaylistEditorPage(
     val playlist = playlists[playlistIndex]
     val song = playlist.songs[songIndex]
     var textEditTarget by remember { mutableStateOf<PlaylistTextEditTarget?>(null) }
+    val playlistEditorScrollState = rememberScrollState()
 
     Box(
         modifier = Modifier
@@ -3431,7 +3477,7 @@ private fun PlaylistEditorPage(
     ) {
         Column(
             modifier = Modifier
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(playlistEditorScrollState)
                 .padding(top = 20.dp, bottom = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -3534,6 +3580,15 @@ private fun PlaylistEditorPage(
             text = appText.addSong,
             modifier = Modifier.align(Alignment.TopEnd),
             onClick = onAddSong,
+        )
+
+        SettingsScrollIndicator(
+            scrollState = playlistEditorScrollState,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 2.dp)
+                .width(4.dp)
+                .height(112.dp),
         )
 
         textEditTarget?.let { target ->
@@ -4074,6 +4129,7 @@ private fun SettingsPage(
     onLanguageChoice: (AppLanguage) -> Unit,
 ) {
     var intensityPickerOpen by rememberSaveable { mutableStateOf(false) }
+    val settingsScrollState = rememberScrollState()
 
     Box(
         modifier = Modifier
@@ -4082,7 +4138,7 @@ private fun SettingsPage(
     ) {
         Column(
             modifier = Modifier
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(settingsScrollState)
                 .padding(horizontal = 12.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -4296,6 +4352,15 @@ private fun SettingsPage(
             )
         }
 
+        SettingsScrollIndicator(
+            scrollState = settingsScrollState,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 4.dp)
+                .width(4.dp)
+                .height(118.dp),
+        )
+
         if (intensityPickerOpen) {
             AccentIntensityChoicePopup(
                 title = appText.intensity,
@@ -4319,6 +4384,41 @@ private fun SettingsPage(
                 },
             )
         }
+    }
+}
+
+@Composable
+private fun SettingsScrollIndicator(
+    scrollState: ScrollState,
+    modifier: Modifier = Modifier,
+) {
+    val maxScroll = scrollState.maxValue
+    val trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = if (maxScroll > 0) 0.18f else 0f)
+    val thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = if (maxScroll > 0) 0.78f else 0f)
+
+    Canvas(modifier = modifier) {
+        if (maxScroll <= 0) return@Canvas
+
+        val strokeWidth = size.width
+        val thumbHeight = max(22.dp.toPx(), size.height * 0.26f)
+        val scrollProgress = (scrollState.value.toFloat() / maxScroll.toFloat()).coerceIn(0f, 1f)
+        val thumbTop = (size.height - thumbHeight) * scrollProgress
+        val centerX = size.width / 2f
+
+        drawLine(
+            color = trackColor,
+            start = Offset(centerX, 0f),
+            end = Offset(centerX, size.height),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = thumbColor,
+            start = Offset(centerX, thumbTop),
+            end = Offset(centerX, thumbTop + thumbHeight),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
     }
 }
 
@@ -4771,10 +4871,12 @@ private fun TunerPage(
     micPermissionGranted: Boolean,
     onProfileChoice: (TunerListenProfile) -> Unit,
     onSaveKey: (String) -> Unit,
+    onSaveBpm: (Int) -> Unit,
     onRequestMicPermission: () -> Unit,
 ) {
     val guessedKey = audioAnalysisState.guessedKey
     val likelyChords = audioAnalysisState.likelyChords
+    val detectedBpm = audioAnalysisState.detectedTempoBpm
 
     Box(
         modifier = Modifier
@@ -4801,15 +4903,12 @@ private fun TunerPage(
             return@Box
         }
 
-        AudioTempoReadout(
-            detectedBpm = audioAnalysisState.detectedTempoBpm,
+        TunerTempoReadout(
+            detectedBpm = detectedBpm,
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 18.dp, top = 34.dp)
+                .padding(start = 18.dp, top = 12.dp)
                 .width(52.dp),
-            fontSize = 8.sp,
-            numberFontSize = 13.sp,
-            color = Color.White.copy(alpha = 0.9f),
         )
 
         Column(
@@ -4924,19 +5023,75 @@ private fun TunerPage(
             }
         }
 
+        if (detectedBpm != null) {
+            TunerBottomActionButton(
+                text = appText.saveBpm,
+                modifier = Modifier.align(Alignment.BottomStart),
+                mirrored = true,
+                onClick = { onSaveBpm(detectedBpm) },
+            )
+        }
+
         if (guessedKey != null) {
-            SmallCommandButton(
+            TunerBottomActionButton(
                 text = appText.saveKey,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 4.dp)
-                    .width(62.dp)
-                    .height(22.dp),
-                fontSize = 8.sp,
+                modifier = Modifier.align(Alignment.BottomEnd),
                 onClick = { onSaveKey(guessedKey) },
             )
         }
     }
+}
+
+@Composable
+private fun TunerTempoReadout(
+    detectedBpm: Int?,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = detectedBpm?.toString() ?: "--",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+        )
+
+        Text(
+            text = "BPM",
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White.copy(alpha = 0.9f),
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun TunerBottomActionButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    mirrored: Boolean = false,
+    onClick: () -> Unit,
+) {
+    SmallCommandButton(
+        text = text,
+        modifier = modifier
+            .padding(
+                start = if (mirrored) 2.dp else 0.dp,
+                end = if (mirrored) 0.dp else 2.dp,
+                bottom = 16.dp,
+            )
+            .rotate(if (mirrored) 38f else -38f)
+            .width(64.dp)
+            .height(24.dp),
+        fontSize = 7.sp,
+        onClick = onClick,
+    )
 }
 
 @Composable
