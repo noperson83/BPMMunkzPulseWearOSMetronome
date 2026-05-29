@@ -283,7 +283,7 @@ private val ThemeBackgroundColorOptions = listOf(
     0xFF102016.toInt(),
 )
 
-private val MusicalKeyOptions = listOf(
+private val MusicalKeyRoots = listOf(
     "C",
     "Db",
     "D",
@@ -296,11 +296,31 @@ private val MusicalKeyOptions = listOf(
     "A",
     "Bb",
     "B",
-    "Am",
-    "Em",
-    "Dm",
-    "Gm",
 )
+
+private val MusicalKeyModeSuffixes = listOf(
+    "",
+    "maj",
+    "m",
+    "min",
+    " Dor",
+    " Phr",
+    " Lyd",
+    " Mix",
+    " Aeol",
+    " Loc",
+    "aug",
+    "dim",
+    "sus2",
+    "sus4",
+    "7",
+    "maj7",
+    "m7",
+)
+
+private val MusicalKeyOptions = MusicalKeyRoots.flatMap { root ->
+    MusicalKeyModeSuffixes.map { suffix -> "$root$suffix" }
+}
 
 private val SongNameOptions = listOf(
     "Intro",
@@ -1759,6 +1779,11 @@ fun BeatPulseScreen(
                             )
                         }
                     },
+                    onSongKeySet = { key ->
+                        updateCurrentSong { song ->
+                            song.copy(musicalKey = key)
+                        }
+                    },
                     onSongNoteChange = { step ->
                         updateCurrentSong { song ->
                             song.copy(
@@ -1901,7 +1926,7 @@ fun BeatPulseScreen(
                             if (!isPreview) {
                                 context.saveLatestMusicReading(detectedBpm, guessedKey)
                                 spectrumOverlayOpen = false
-                                context.openWatchFace()
+                                context.showWatchFace()
                             } else {
                                 spectrumOverlayOpen = false
                             }
@@ -3101,7 +3126,7 @@ private fun PlaylistClockPage(
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 12.dp),
+                .padding(top = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
@@ -3116,7 +3141,7 @@ private fun PlaylistClockPage(
             Text(
                 text = "${songIndex + 1}/${playlist.songs.size} ${song.name}",
                 modifier = Modifier.width(132.dp),
-                fontSize = 14.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
@@ -3130,7 +3155,7 @@ private fun PlaylistClockPage(
                 .align(Alignment.TopCenter)
                 .padding(top = 46.dp,end = 12.dp)
                 .width(180.dp)
-                .height(26.dp),
+                .height(24.dp),
         ) {
             Box(
                 modifier = Modifier
@@ -3152,7 +3177,7 @@ private fun PlaylistClockPage(
             Text(
                 text = "${song.bpm}",
                 modifier = Modifier.align(Alignment.CenterEnd),
-                fontSize = 24.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -3393,6 +3418,7 @@ private fun PlaylistEditorPopup(
     onSongNameEdit: (String) -> Unit,
     onSongBpmChange: (Int) -> Unit,
     onSongKeyChange: (Int) -> Unit,
+    onSongKeySet: (String) -> Unit,
     onSongNoteChange: (Int) -> Unit,
     onSongNoteEdit: (String) -> Unit,
     onEditRhythm: () -> Unit,
@@ -3415,6 +3441,7 @@ private fun PlaylistEditorPopup(
             onSongNameEdit = onSongNameEdit,
             onSongBpmChange = onSongBpmChange,
             onSongKeyChange = onSongKeyChange,
+            onSongKeySet = onSongKeySet,
             onSongNoteChange = onSongNoteChange,
             onSongNoteEdit = onSongNoteEdit,
             onEditRhythm = onEditRhythm,
@@ -3513,6 +3540,7 @@ private fun PlaylistEditorPage(
     onSongNameEdit: (String) -> Unit,
     onSongBpmChange: (Int) -> Unit,
     onSongKeyChange: (Int) -> Unit,
+    onSongKeySet: (String) -> Unit,
     onSongNoteChange: (Int) -> Unit,
     onSongNoteEdit: (String) -> Unit,
     onEditRhythm: () -> Unit,
@@ -3521,6 +3549,7 @@ private fun PlaylistEditorPage(
     val playlist = playlists[playlistIndex]
     val song = playlist.songs[songIndex]
     var textEditTarget by remember { mutableStateOf<PlaylistTextEditTarget?>(null) }
+    var keyPickerOpen by remember { mutableStateOf(false) }
     val playlistEditorScrollState = rememberScrollState()
 
     Box(
@@ -3576,6 +3605,7 @@ private fun PlaylistEditorPage(
                 value = song.musicalKey,
                 onDecrease = { onSongKeyChange(-1) },
                 onIncrease = { onSongKeyChange(1) },
+                onValueClick = { keyPickerOpen = true },
             )
 
             EditValueRow(
@@ -3645,6 +3675,18 @@ private fun PlaylistEditorPage(
                 .height(112.dp),
         )
 
+        if (keyPickerOpen) {
+            MusicalKeyPickerPopup(
+                value = song.musicalKey,
+                doneText = appText.done,
+                onCancel = { keyPickerOpen = false },
+                onCommit = { nextKey ->
+                    onSongKeySet(nextKey)
+                    keyPickerOpen = false
+                },
+            )
+        }
+
         textEditTarget?.let { target ->
             val title = when (target) {
                 PlaylistTextEditTarget.PlaylistName -> "Edit List"
@@ -3671,6 +3713,126 @@ private fun PlaylistEditorPage(
                 },
             )
         }
+    }
+}
+
+@Composable
+private fun MusicalKeyPickerPopup(
+    value: String,
+    doneText: String,
+    onCancel: () -> Unit,
+    onCommit: (String) -> Unit,
+) {
+    var root by remember(value) { mutableStateOf(value.toMusicalKeyRoot()) }
+    var suffix by remember(value) { mutableStateOf(value.toMusicalKeyModeSuffix()) }
+    val selectedKey = "$root$suffix"
+
+    BackHandler(onBack = onCancel)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.92f))
+            .clickable(onClick = {}),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.width(176.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Text(
+                text = "Key",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            KeyPickerRow(
+                label = "Root",
+                value = root,
+                onPrevious = { root = cycleOption(MusicalKeyRoots, root, -1) },
+                onNext = { root = cycleOption(MusicalKeyRoots, root, 1) },
+            )
+
+            KeyPickerRow(
+                label = "Mode",
+                value = suffix.ifBlank { "maj" }.trim(),
+                onPrevious = { suffix = cycleOption(MusicalKeyModeSuffixes, suffix, -1) },
+                onNext = { suffix = cycleOption(MusicalKeyModeSuffixes, suffix, 1) },
+            )
+
+            Text(
+                text = selectedKey,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SmallCommandButton(
+                    text = doneText,
+                    modifier = Modifier
+                        .width(72.dp)
+                        .height(28.dp),
+                    fontSize = 10.sp,
+                    onClick = { onCommit(selectedKey) },
+                )
+
+                SmallCommandButton(
+                    text = "Back",
+                    modifier = Modifier
+                        .width(72.dp)
+                        .height(28.dp),
+                    fontSize = 10.sp,
+                    onClick = onCancel,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun KeyPickerRow(
+    label: String,
+    value: String,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
+    Text(
+        text = label,
+        fontSize = 9.sp,
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
+    )
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SmallCommandButton(
+            text = "<",
+            modifier = Modifier.size(28.dp),
+            fontSize = 13.sp,
+            onClick = onPrevious,
+        )
+        Text(
+            text = value,
+            modifier = Modifier.width(88.dp),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        SmallCommandButton(
+            text = ">",
+            modifier = Modifier.size(28.dp),
+            fontSize = 13.sp,
+            onClick = onNext,
+        )
     }
 }
 
@@ -4925,7 +5087,7 @@ private fun ArchedTopStartButton(
     SmallCommandButton(
         text = text,
         modifier = modifier
-            .padding(top = 2.dp, start = 2.dp)
+            .padding(top = 10.dp, start = 10.dp)
             .rotate(-38f)
             .width(58.dp)
             .height(24.dp),
@@ -4949,6 +5111,7 @@ private fun TunerPage(
     val guessedKey = audioAnalysisState.guessedKey
     val likelyChords = audioAnalysisState.likelyChords
     val detectedBpm = audioAnalysisState.detectedTempoBpm
+    var keySaveRoot by rememberSaveable { mutableStateOf<String?>(null) }
 
     Box(
         modifier = Modifier
@@ -5108,7 +5271,81 @@ private fun TunerPage(
             TunerBottomActionButton(
                 text = appText.saveKey,
                 modifier = Modifier.align(Alignment.BottomEnd),
-                onClick = { onSaveKey(guessedKey) },
+                onClick = { keySaveRoot = guessedKey.toMusicalKeyRoot() },
+            )
+        }
+
+        keySaveRoot?.let { root ->
+            TunerKeySavePopup(
+                root = root,
+                doneText = appText.done,
+                onCancel = { keySaveRoot = null },
+                onSaveKey = { key ->
+                    onSaveKey(key)
+                    keySaveRoot = null
+                },
+            )
+        }
+
+    }
+}
+
+@Composable
+private fun TunerKeySavePopup(
+    root: String,
+    doneText: String,
+    onCancel: () -> Unit,
+    onSaveKey: (String) -> Unit,
+) {
+    BackHandler(onBack = onCancel)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.92f))
+            .clickable(onClick = {}),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .width(176.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = "Save as",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            MusicalKeyModeSuffixes.chunked(2).forEach { rowModes ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    rowModes.forEach { suffix ->
+                        SmallCommandButton(
+                            text = "$root$suffix",
+                            modifier = Modifier
+                                .width(78.dp)
+                                .height(28.dp),
+                            fontSize = 10.sp,
+                            onClick = { onSaveKey("$root$suffix") },
+                        )
+                    }
+                }
+            }
+
+            SmallCommandButton(
+                text = doneText,
+                modifier = Modifier
+                    .width(74.dp)
+                    .height(28.dp),
+                fontSize = 10.sp,
+                onClick = onCancel,
             )
         }
     }
@@ -6165,6 +6402,28 @@ private fun cycleOption(
     return options[(currentIndex + step).wrap(options.size)]
 }
 
+private fun String.toMusicalKeyRoot(): String {
+    val key = trim()
+    val root = MusicalKeyRoots
+        .sortedByDescending { it.length }
+        .firstOrNull { key.startsWith(it) }
+        ?: "C"
+    return when (root) {
+        "C#" -> "Db"
+        "D#" -> "Eb"
+        "F#" -> "Gb"
+        "G#" -> "Ab"
+        "A#" -> "Bb"
+        else -> root.takeIf { it in MusicalKeyRoots } ?: "C"
+    }
+}
+
+private fun String.toMusicalKeyModeSuffix(): String {
+    val root = toMusicalKeyRoot()
+    val suffix = trim().removePrefix(root)
+    return MusicalKeyModeSuffixes.firstOrNull { it == suffix } ?: ""
+}
+
 private fun Int.wrap(size: Int): Int {
     return ((this % size) + size) % size
 }
@@ -6318,8 +6577,8 @@ private fun Context.saveSettingsInt(
         }
 }
 
-private fun Context.openWatchFace() {
-    startActivity(
+private fun Context.showWatchFace() {
+    findActivity()?.moveTaskToBack(true) ?: startActivity(
         Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),

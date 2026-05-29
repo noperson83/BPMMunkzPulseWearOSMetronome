@@ -99,22 +99,22 @@
         </ListConfiguration>
 
         <ComplicationSlot
-            x="150"
-            y="76"
-            width="160"
+            x="260"
+            y="84"
+            width="108"
             height="48"
             slotId="1"
             displayName="latest_bpm_slot_label"
             supportedTypes="SHORT_TEXT EMPTY"
             isCustomizable="TRUE">
-            <BoundingBox x="0" y="0" width="160" height="48" outlinePadding="4" />
+            <BoundingBox x="0" y="0" width="108" height="48" outlinePadding="4" />
             <DefaultProviderPolicy
                 primaryProvider="com.example.bpmmunkzpulse/com.example.bpmmunkzpulse.presentation.LatestBpmComplicationDataSourceService"
                 primaryProviderType="SHORT_TEXT"
                 defaultSystemProvider="EMPTY"
                 defaultSystemProviderType="EMPTY" />
             <Complication type="SHORT_TEXT">
-                <PartText x="0" y="0" width="160" height="48">
+                <PartText x="0" y="0" width="64" height="48">
                     <Text align="CENTER" ellipsis="TRUE">
                         <Font
                             family="SYNC_TO_DEVICE"
@@ -130,26 +130,26 @@
         </ComplicationSlot>
 
         <ComplicationSlot
-            x="78"
-            y="82"
-            width="68"
-            height="36"
+            x="136"
+            y="84"
+            width="108"
+            height="48"
             slotId="2"
             displayName="latest_key_slot_label"
             supportedTypes="SHORT_TEXT EMPTY"
             isCustomizable="TRUE">
-            <BoundingBox x="0" y="0" width="68" height="36" outlinePadding="4" />
+            <BoundingBox x="0" y="0" width="108" height="48" outlinePadding="4" />
             <DefaultProviderPolicy
                 primaryProvider="com.example.bpmmunkzpulse/com.example.bpmmunkzpulse.presentation.LatestKeyComplicationDataSourceService"
                 primaryProviderType="SHORT_TEXT"
                 defaultSystemProvider="EMPTY"
                 defaultSystemProviderType="EMPTY" />
             <Complication type="SHORT_TEXT">
-                <PartText x="0" y="0" width="68" height="36">
+                <PartText x="0" y="0" width="64" height="48">
                     <Text align="CENTER" ellipsis="TRUE">
                         <Font
                             family="SYNC_TO_DEVICE"
-                            size="22"
+                            size="34"
                             weight="BOLD"
                             slant="NORMAL"
                             color="#FFFFFFFF">

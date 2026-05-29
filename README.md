@@ -18,6 +18,131 @@ BPM Munkz Pulse is a Wear OS tempo, tuner, spectrum, set-list, tile, and watch-f
 - Custom app colors, clock dial images, watch-face dial styles, and hand/ring colors.
 - Separate watch-face package with all-colors, blue, green, orange, purple, and white dials.
 
+## App Page Rundown
+
+The app uses four horizontal Wear OS pages. The screen is built for round watches, so most actions are compact buttons, popups, and overlays instead of deep phone-style menus.
+
+### Page 1: Main Clock
+
+The main page is the fast performance view.
+
+- Shows the selected clock image, current time, and current song context.
+- Start/stop control is centered for quick access.
+- Edit opens playlist/song controls.
+- Tuner and spectrum tools can be opened from the audio controls.
+- The quick-stop overlay keeps stop access available while the metronome is running.
+- Uses the selected app theme colors, clock image, clock hand color, and ring color.
+
+### Page 2: Rhythm
+
+The rhythm page is the main metronome setup surface.
+
+- Large BPM readout opens the tap-tempo popup.
+- Beat count and subdivision are shown in the center.
+- Beat circles around the dial show accent placement.
+- Beat accents support big, medium, little, and silent states.
+- Tuner and spectrum buttons can open analyzer overlays above the rhythm editor.
+- Edit Rhythm opens song/rhythm editing without leaving the watch workflow.
+- The big ring pulse can be shown for all beats, big beats only, or turned off.
+
+### Page 3: Settings
+
+The settings page controls app behavior, audio feel, visuals, and language.
+
+- Beep toggle controls audible metronome tone.
+- Vibration toggle controls haptic pulse.
+- Intensity opens a picker for big, medium, little, and silent accent ranges.
+- A4 reference adjusts tuner pitch reference from 400 to 480 Hz.
+- Diagnostics show app CPU usage for performance checks.
+- Keep screen on offers App Open, Playing, and Timeout modes.
+- Theme controls main color and background color.
+- Tap ring controls the big ring color and flash mode.
+- Clock controls watch/app clock hand color and clock image.
+- Clock image choices include Rainb, Blue, Green, Orange, Purple, White, Munk, Sax, Piano, Gtr, Trum, and Rock.
+- Language switches compact UI labels between English and Spanish.
+- A right-side scroll indicator shows position on the settings page.
+
+### Page 4: Tap Tempo
+
+The tap tempo page is a dedicated tempo capture surface.
+
+- Tap repeatedly to estimate BPM.
+- Use -/+ for single BPM nudges.
+- Long controls support larger 5 BPM changes.
+- Start/stop is available from the same flow.
+- The page keeps the large ring visual available without forcing that animation into every popup.
+
+## Analyzer Overlays
+
+Analyzer overlays sit above the current page so the user can dip into audio tools and return quickly.
+
+### Tuner
+
+- Shows detected note, frequency, cents, recent notes, guessed key, and likely chords.
+- Supports listen profiles for different analysis behavior.
+- `Save BPM` saves the detected tempo to the current playlist song.
+- `Save Key` saves the guessed key to the current playlist song.
+- This page stays song-focused and does not overwrite the watch-face study slot.
+
+### Spectrum
+
+- Shows spectrum bars, peak frequency, note band, detected BPM, and guessed key.
+- Tapping a latest BPM/key complication on the watch face opens the app directly into this overlay.
+- When both BPM and key are available, the `Clock` action appears at the top-left.
+- `Clock` saves the latest BPM/key pair to the watch face study slot, requests a complication refresh, and returns to the watch face.
+- This latest study save is separate from playlists and rewrites the same single slot every use.
+
+## Playlist And Song Data
+
+Playlists are saved inside the app package and are separate from the watch-face latest reading.
+
+Each saved song can include:
+
+- Song name.
+- BPM.
+- Beats per measure.
+- Accent beat.
+- Subdivision count.
+- Per-beat accent types.
+- Accent intensity mode.
+- Musical key.
+- Note.
+
+## Watch Face Rundown
+
+The `:watchface` module is a separate Watch Face Format package. It is intended to work alongside the app, not replace it.
+
+- Package id: `com.example.bpmmunkzface`.
+- Format version is declared in `watchface/src/main/AndroidManifest.xml`.
+- Dial styles: all colors, blue, green, orange, purple, and white.
+- Hand color configuration: green, white, blue, orange, and purple.
+- Latest key complication sits on the left side of the top dial area.
+- Latest BPM complication sits on the right side of the top dial area.
+- Key and BPM are aligned to grow inward so they avoid covering the 11 and 1 areas.
+- Tapping either latest-reading complication opens BPM Munkz Pulse into the spectrum workflow.
+- The app publishes latest readings through:
+
+```text
+LatestBpmComplicationDataSourceService
+LatestKeyComplicationDataSourceService
+```
+
+## Technical Specs
+
+- App module: `:app`.
+- Watch-face module: `:watchface`.
+- App package id: `com.example.bpmmunkzpulse`.
+- Watch-face package id: `com.example.bpmmunkzface`.
+- BPM range: 30 to 240.
+- Audio sample rate: 44,100 Hz.
+- Audio frame size: 2,048 samples.
+- Spectrum bar count: 28.
+- A4 reference range: 400 to 480 Hz.
+- Default A4 reference: 440 Hz.
+- UI languages: English and Spanish.
+- Wear OS tile: included in `BpmMunkzTileService`.
+- Metronome timing: foreground service in `MetronomeService`.
+
 ## Project Layout
 
 ```text
@@ -100,6 +225,8 @@ The watch face can show latest BPM and latest key from the app via complication 
 com.example.bpmmunkzpulse.presentation.LatestBpmComplicationDataSourceService
 com.example.bpmmunkzpulse.presentation.LatestKeyComplicationDataSourceService
 ```
+
+If a fresh install still shows `--` or `...`, long-press the watch face and confirm that the two complication slots are assigned to `Latest BPM` and `Latest Key`. Some Wear OS/Samsung face instances keep old complication assignments after reinstalling a debug APK.
 
 ## Website Page
 
