@@ -3,4 +3,6 @@
     <string name="tile_label">Pulse</string>
     <string name="tile_description">Quick launch tile for BPM Munkz Pulse.</string>
     <string name="tile_open">Open</string>
+    <string name="complication_latest_bpm">Latest BPM</string>
+    <string name="complication_latest_key">Latest Key</string>
 </resources>

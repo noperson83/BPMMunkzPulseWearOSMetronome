@@ -7,4 +7,12 @@
     <string name="dial_style_orange_label">Orange</string>
     <string name="dial_style_purple_label">Purple</string>
     <string name="dial_style_white_label">White</string>
+    <string name="hand_color_label">Hand color</string>
+    <string name="hand_color_green_label">Green</string>
+    <string name="hand_color_white_label">White</string>
+    <string name="hand_color_blue_label">Blue</string>
+    <string name="hand_color_orange_label">Orange</string>
+    <string name="hand_color_purple_label">Purple</string>
+    <string name="latest_bpm_slot_label">Latest BPM</string>
+    <string name="latest_key_slot_label">Latest Key</string>
 </resources>

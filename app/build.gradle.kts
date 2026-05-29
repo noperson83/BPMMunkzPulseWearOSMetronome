@@ -60,5 +60,6 @@ dependencies {
     implementation(libs.wear.protolayout)
     implementation(libs.wear.protolayout.material3)
     implementation(libs.wear.protolayout.expression)
+    implementation(libs.wear.watchface.complications.data.source)
     debugImplementation(libs.wear.tiles.renderer)
 }

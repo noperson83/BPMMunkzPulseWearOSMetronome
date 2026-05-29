@@ -11,6 +11,7 @@ activityCompose = "1.13.0"
 coreSplashscreen = "1.2.0"
 wearTiles = "1.6.0"
 wearProtoLayout = "1.4.0"
+wearWatchface = "1.2.1"
 
 [libraries]
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
@@ -32,6 +33,7 @@ wear-protolayout = { group = "androidx.wear.protolayout", name = "protolayout", 
 wear-protolayout-material3 = { group = "androidx.wear.protolayout", name = "protolayout-material3", version.ref = "wearProtoLayout" }
 wear-protolayout-expression = { group = "androidx.wear.protolayout", name = "protolayout-expression", version.ref = "wearProtoLayout" }
 wear-tiles-renderer = { group = "androidx.wear.tiles", name = "tiles-renderer", version.ref = "wearTiles" }
+wear-watchface-complications-data-source = { group = "androidx.wear.watchface", name = "watchface-complications-data-source-ktx", version.ref = "wearWatchface" }
 
 
 [plugins]

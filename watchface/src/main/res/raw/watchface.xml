@@ -9,34 +9,59 @@
             <ListOption
                 id="all_colors"
                 displayName="dial_style_all_colors_label"
-                screenReaderText="dial_style_all_colors_label"
-                icon="dial_all_colors" />
+                screenReaderText="dial_style_all_colors_label" />
             <ListOption
                 id="blue"
                 displayName="dial_style_blue_label"
-                screenReaderText="dial_style_blue_label"
-                icon="dial_blue" />
+                screenReaderText="dial_style_blue_label" />
             <ListOption
                 id="green"
                 displayName="dial_style_green_label"
-                screenReaderText="dial_style_green_label"
-                icon="dial_green" />
+                screenReaderText="dial_style_green_label" />
             <ListOption
                 id="orange"
                 displayName="dial_style_orange_label"
-                screenReaderText="dial_style_orange_label"
-                icon="dial_orange" />
+                screenReaderText="dial_style_orange_label" />
             <ListOption
                 id="purple"
                 displayName="dial_style_purple_label"
-                screenReaderText="dial_style_purple_label"
-                icon="dial_purple" />
+                screenReaderText="dial_style_purple_label" />
             <ListOption
                 id="white"
                 displayName="dial_style_white_label"
-                screenReaderText="dial_style_white_label"
-                icon="dial_white" />
+                screenReaderText="dial_style_white_label" />
         </ListConfiguration>
+        <ColorConfiguration
+            id="hand_color"
+            displayName="hand_color_label"
+            screenReaderText="hand_color_label"
+            defaultValue="0">
+            <ColorOption
+                id="0"
+                displayName="hand_color_green_label"
+                screenReaderText="hand_color_green_label"
+                colors="#FF76FF03" />
+            <ColorOption
+                id="1"
+                displayName="hand_color_white_label"
+                screenReaderText="hand_color_white_label"
+                colors="#FFFFFFFF" />
+            <ColorOption
+                id="2"
+                displayName="hand_color_blue_label"
+                screenReaderText="hand_color_blue_label"
+                colors="#FF39A7FF" />
+            <ColorOption
+                id="3"
+                displayName="hand_color_orange_label"
+                screenReaderText="hand_color_orange_label"
+                colors="#FFFF8C1A" />
+            <ColorOption
+                id="4"
+                displayName="hand_color_purple_label"
+                screenReaderText="hand_color_purple_label"
+                colors="#FFB86BFF" />
+        </ColorConfiguration>
     </UserConfigurations>
 
     <Scene>
@@ -73,6 +98,68 @@
             </ListOption>
         </ListConfiguration>
 
+        <ComplicationSlot
+            x="150"
+            y="76"
+            width="160"
+            height="48"
+            slotId="1"
+            displayName="latest_bpm_slot_label"
+            supportedTypes="SHORT_TEXT EMPTY"
+            isCustomizable="TRUE">
+            <BoundingBox x="0" y="0" width="160" height="48" outlinePadding="4" />
+            <DefaultProviderPolicy
+                primaryProvider="com.example.bpmmunkzpulse/com.example.bpmmunkzpulse.presentation.LatestBpmComplicationDataSourceService"
+                primaryProviderType="SHORT_TEXT"
+                defaultSystemProvider="EMPTY"
+                defaultSystemProviderType="EMPTY" />
+            <Complication type="SHORT_TEXT">
+                <PartText x="0" y="0" width="160" height="48">
+                    <Text align="CENTER" ellipsis="TRUE">
+                        <Font
+                            family="SYNC_TO_DEVICE"
+                            size="34"
+                            weight="BOLD"
+                            slant="NORMAL"
+                            color="#FF76FF03">
+                            <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
+                </PartText>
+            </Complication>
+        </ComplicationSlot>
+
+        <ComplicationSlot
+            x="78"
+            y="82"
+            width="68"
+            height="36"
+            slotId="2"
+            displayName="latest_key_slot_label"
+            supportedTypes="SHORT_TEXT EMPTY"
+            isCustomizable="TRUE">
+            <BoundingBox x="0" y="0" width="68" height="36" outlinePadding="4" />
+            <DefaultProviderPolicy
+                primaryProvider="com.example.bpmmunkzpulse/com.example.bpmmunkzpulse.presentation.LatestKeyComplicationDataSourceService"
+                primaryProviderType="SHORT_TEXT"
+                defaultSystemProvider="EMPTY"
+                defaultSystemProviderType="EMPTY" />
+            <Complication type="SHORT_TEXT">
+                <PartText x="0" y="0" width="68" height="36">
+                    <Text align="CENTER" ellipsis="TRUE">
+                        <Font
+                            family="SYNC_TO_DEVICE"
+                            size="22"
+                            weight="BOLD"
+                            slant="NORMAL"
+                            color="#FFFFFFFF">
+                            <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
+                </PartText>
+            </Complication>
+        </ComplicationSlot>
+
         <AnalogClock x="0" y="0" width="450" height="450">
             <HourHand
                 resource="hour_hand"
@@ -81,7 +168,8 @@
                 width="24"
                 height="170"
                 pivotX="0.5"
-                pivotY="0.882" />
+                pivotY="0.882"
+                tintColor="[CONFIGURATION.hand_color.0]" />
             <MinuteHand
                 resource="minute_hand"
                 x="216"
@@ -89,7 +177,8 @@
                 width="18"
                 height="220"
                 pivotX="0.5"
-                pivotY="0.891" />
+                pivotY="0.891"
+                tintColor="[CONFIGURATION.hand_color.0]" />
             <SecondHand
                 resource="second_hand"
                 x="221"
@@ -97,7 +186,8 @@
                 width="8"
                 height="230"
                 pivotX="0.5"
-                pivotY="0.887">
+                pivotY="0.887"
+                tintColor="[CONFIGURATION.hand_color.0]">
                 <Variant mode="AMBIENT" target="alpha" value="0" />
                 <Sweep frequency="15" />
             </SecondHand>

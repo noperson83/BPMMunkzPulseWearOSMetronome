@@ -150,6 +150,8 @@ private const val RHYTHM_PAGE_INDEX = 1
 private const val SETTINGS_PAGE_INDEX = 2
 private const val TAP_TEMPO_FREE_PAGE_INDEX = 3
 private const val PULSE_PAGE_COUNT = 4
+internal const val ACTION_OPEN_SPECTRUM = "com.example.bpmmunkzpulse.action.OPEN_SPECTRUM"
+internal const val EXTRA_OPEN_SPECTRUM = "com.example.bpmmunkzpulse.extra.OPEN_SPECTRUM"
 private const val AUDIO_SAMPLE_RATE = 44_100
 private const val AUDIO_FRAME_SIZE = 2_048
 private const val SPECTRUM_BAR_COUNT = 28
@@ -464,6 +466,7 @@ private data class AppText(
     val keyGuess: String,
     val saveKey: String,
     val saveBpm: String,
+    val toClock: String,
     val rhythm: String,
     val timeSignature: String,
     val subdivision: String,
@@ -597,6 +600,7 @@ private fun appTextFor(language: AppLanguage): AppText {
             keyGuess = "Key",
             saveKey = "Save Key",
             saveBpm = "Save BPM",
+            toClock = "Clock",
             rhythm = "Pulse",
             timeSignature = "Time Signature",
             subdivision = "Sub Divisions",
@@ -654,6 +658,7 @@ private fun appTextFor(language: AppLanguage): AppText {
             keyGuess = "Tono",
             saveKey = "Guardar tono",
             saveBpm = "Guardar BPM",
+            toClock = "Reloj",
             rhythm = "Pulso",
             timeSignature = "Compas",
             subdivision = "Sub Divisiones",
@@ -700,16 +705,33 @@ private fun appTextFor(language: AppLanguage): AppText {
 }
 
 class MainActivity : ComponentActivity() {
+    private var openSpectrumRequest by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        openSpectrumRequest = intent.shouldOpenSpectrum()
         setContent {
-            WearApp()
+            WearApp(
+                openSpectrumRequest = openSpectrumRequest,
+                onOpenSpectrumRequestConsumed = { openSpectrumRequest = false },
+            )
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.shouldOpenSpectrum()) {
+            openSpectrumRequest = true
         }
     }
 }
 
 @Composable
-fun WearApp() {
+fun WearApp(
+    openSpectrumRequest: Boolean = false,
+    onOpenSpectrumRequestConsumed: () -> Unit = {},
+) {
     BPMMunkzPulseTheme {
         var showLaunchSplash by rememberSaveable { mutableStateOf(true) }
 
@@ -722,10 +744,17 @@ fun WearApp() {
             AppLaunchSplashScreen()
         } else {
             AppScaffold {
-                BeatPulseScreen()
+                BeatPulseScreen(
+                    openSpectrumRequest = openSpectrumRequest,
+                    onOpenSpectrumRequestConsumed = onOpenSpectrumRequestConsumed,
+                )
             }
         }
     }
+}
+
+private fun Intent?.shouldOpenSpectrum(): Boolean {
+    return this?.action == ACTION_OPEN_SPECTRUM || this?.getBooleanExtra(EXTRA_OPEN_SPECTRUM, false) == true
 }
 
 @Composable
@@ -762,7 +791,10 @@ private fun AppLaunchSplashScreen() {
 
 @Composable
 @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-fun BeatPulseScreen() {
+fun BeatPulseScreen(
+    openSpectrumRequest: Boolean = false,
+    onOpenSpectrumRequestConsumed: () -> Unit = {},
+) {
     val context = LocalContext.current
     val isPreview = LocalInspectionMode.current
     val activity = remember(context) { context.findActivity() }
@@ -925,6 +957,19 @@ fun BeatPulseScreen() {
         micPermissionGranted = granted
     }
     val audioOverlayOpen = tunerOverlayOpen || spectrumOverlayOpen
+
+    LaunchedEffect(openSpectrumRequest) {
+        if (openSpectrumRequest) {
+            tapTempoPopupOpen = false
+            tunerOverlayOpen = false
+            playlistEditorPopupOpen = false
+            playlistRhythmEditorPopupOpen = false
+            rhythmEditorPopupOpen = false
+            spectrumOverlayOpen = true
+            onOpenSpectrumRequestConsumed()
+        }
+    }
+
     val audioAnalysisState = rememberAudioAnalysisState(
         enabled = micPermissionGranted && audioOverlayOpen && !isPreview,
         listenProfile = tunerListenProfile,
@@ -1852,6 +1897,15 @@ fun BeatPulseScreen() {
                         audioAnalysisState = audioAnalysisState,
                         a4ReferenceHz = a4ReferenceHz,
                         micPermissionGranted = micPermissionGranted,
+                        onSaveToClock = { detectedBpm, guessedKey ->
+                            if (!isPreview) {
+                                context.saveLatestMusicReading(detectedBpm, guessedKey)
+                                spectrumOverlayOpen = false
+                                context.openWatchFace()
+                            } else {
+                                spectrumOverlayOpen = false
+                            }
+                        },
                         onRequestMicPermission = {
                             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         },
@@ -2123,8 +2177,8 @@ private fun RhythmLiveCanvas(
     beatFlash: Boolean,
     isRunning: Boolean,
     playbackStartedAtMs: Long,
-    beatRingVisible: Boolean = true,
     modifier: Modifier = Modifier,
+    beatRingVisible: Boolean = true,
     onBpmClick: () -> Unit,
     onEdit: () -> Unit,
     onToggleRunning: () -> Unit,
@@ -4863,6 +4917,24 @@ private fun ArchedDoneButton(
 }
 
 @Composable
+private fun ArchedTopStartButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SmallCommandButton(
+        text = text,
+        modifier = modifier
+            .padding(top = 2.dp, start = 2.dp)
+            .rotate(-38f)
+            .width(58.dp)
+            .height(24.dp),
+        fontSize = 9.sp,
+        onClick = onClick,
+    )
+}
+
+@Composable
 private fun TunerPage(
     appText: AppText,
     appLanguage: AppLanguage,
@@ -5100,11 +5172,14 @@ private fun SpectrumAnalyzerPage(
     audioAnalysisState: AudioAnalysisState,
     a4ReferenceHz: Int,
     micPermissionGranted: Boolean,
+    onSaveToClock: (Int, String) -> Unit,
     onRequestMicPermission: () -> Unit,
 ) {
     val peakReading = remember(audioAnalysisState.spectrum) {
         audioAnalysisState.spectrum.peakSpectrumReading()
     }
+    val detectedBpm = audioAnalysisState.detectedTempoBpm
+    val guessedKey = audioAnalysisState.guessedKey
 
     Box(
         modifier = Modifier
@@ -5126,12 +5201,12 @@ private fun SpectrumAnalyzerPage(
             Spacer(modifier = Modifier.height(2.dp))
 
             AudioTempoReadout(
-                detectedBpm = audioAnalysisState.detectedTempoBpm,
+                detectedBpm = detectedBpm,
                 modifier = Modifier.width(60.dp),
             )
 
             Text(
-                text = audioAnalysisState.guessedKey?.let { "Key of $it" } ?: "Key of --",
+                text = guessedKey?.let { "Key of $it" } ?: "Key of --",
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White.copy(alpha = 0.88f),
@@ -5162,6 +5237,14 @@ private fun SpectrumAnalyzerPage(
                     textAlign = TextAlign.Center,
                 )
             }
+        }
+
+        if (detectedBpm != null && guessedKey != null) {
+            ArchedTopStartButton(
+                text = appText.toClock,
+                modifier = Modifier.align(Alignment.TopStart),
+                onClick = { onSaveToClock(detectedBpm, guessedKey) },
+            )
         }
     }
 }
@@ -6233,6 +6316,14 @@ private fun Context.saveSettingsInt(
         .edit {
             putInt(key, value)
         }
+}
+
+private fun Context.openWatchFace() {
+    startActivity(
+        Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_HOME)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+    )
 }
 
 @Composable

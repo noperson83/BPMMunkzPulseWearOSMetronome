@@ -3,4 +3,6 @@
     <string name="tile_label">Pulso</string>
     <string name="tile_description">Acceso rápido para BPM Munkz Pulse.</string>
     <string name="tile_open">Abrir</string>
+    <string name="complication_latest_bpm">BPM reciente</string>
+    <string name="complication_latest_key">Tono reciente</string>
 </resources>
