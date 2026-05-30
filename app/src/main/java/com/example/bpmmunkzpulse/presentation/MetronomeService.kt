@@ -12,7 +12,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.media.AudioManager
+import android.media.SoundPool
 import android.media.ToneGenerator
 import android.os.Binder
 import android.os.IBinder
@@ -38,6 +42,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
+import kotlin.math.PI
+import kotlin.math.sin
 
 enum class BeatAccentType(val persistedValue: Int) {
     Big(0),
@@ -60,6 +66,17 @@ enum class BeatAccentType(val persistedValue: Int) {
     companion object {
         fun fromPersistedValue(value: Int): BeatAccentType {
             return entries.firstOrNull { it.persistedValue == value } ?: Silent
+        }
+    }
+}
+
+enum class BeatSoundMode(val persistedValue: Int) {
+    Clicks(0),
+    Wood(1);
+
+    companion object {
+        fun fromPersistedValue(value: Int): BeatSoundMode {
+            return entries.firstOrNull { it.persistedValue == value } ?: Clicks
         }
     }
 }
@@ -120,6 +137,10 @@ data class MetronomeState(
     val accentIntensityRanges: List<AccentIntensityRange> = defaultAccentIntensityRanges(),
     val hapticsEnabled: Boolean = false,
     val beepEnabled: Boolean = false,
+    val beatSoundMode: BeatSoundMode = BeatSoundMode.Clicks,
+    val keyDroneEnabled: Boolean = false,
+    val keyDroneVolumePercent: Int = 18,
+    val musicalKey: String = "C",
     val currentBeatIndex: Int = 1,
     val currentSubdivisionIndex: Int = 1,
     val playlistIndex: Int = 0,
@@ -168,6 +189,7 @@ class MetronomeService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var vibrator: Vibrator? = null
     private var tonePlayer: BeatTonePlayer? = null
+    private var keyDronePlayer: KeyDronePlayer? = null
 
     val state: StateFlow<MetronomeState> = mutableState.asStateFlow()
 
@@ -180,7 +202,8 @@ class MetronomeService : Service() {
         super.onCreate()
         mutableState.value = applicationContext.loadSavedRhythmState()
         vibrator = beatPulseVibrator()
-        tonePlayer = BeatTonePlayer()
+        tonePlayer = BeatTonePlayer(applicationContext)
+        keyDronePlayer = KeyDronePlayer()
     }
 
     override fun onBind(intent: Intent?): IBinder {
@@ -219,6 +242,7 @@ class MetronomeService : Service() {
         applicationContext.saveRhythmState(mutableState.value)
         startInForeground()
         wakeLock().acquireIfNeeded()
+        syncKeyDrone()
         restartTicker(resetClock = false)
     }
 
@@ -237,6 +261,7 @@ class MetronomeService : Service() {
         }
         wakeLock?.releaseIfHeld()
         cancelHaptics()
+        keyDronePlayer?.stop()
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf()
     }
@@ -324,6 +349,24 @@ class MetronomeService : Service() {
         }
     }
 
+    fun setBeatSoundMode(beatSoundMode: BeatSoundMode) {
+        updateConfig(restartBeat = false) {
+            it.copy(beatSoundMode = beatSoundMode)
+        }
+    }
+
+    fun setKeyDroneEnabled(keyDroneEnabled: Boolean) {
+        updateConfig(restartBeat = false) {
+            it.copy(keyDroneEnabled = keyDroneEnabled)
+        }
+    }
+
+    fun setKeyDroneVolumePercent(keyDroneVolumePercent: Int) {
+        updateConfig(restartBeat = false) {
+            it.copy(keyDroneVolumePercent = keyDroneVolumePercent.coerceIn(0, 100))
+        }
+    }
+
     fun setAccentIntensityMode(accentIntensityMode: AccentIntensityMode) {
         updateConfig(restartBeat = false) {
             it.copy(accentIntensityMode = accentIntensityMode)
@@ -346,6 +389,7 @@ class MetronomeService : Service() {
         beatAccentTypes: List<BeatAccentType> = mutableState.value.beatAccentTypes,
         accentIntensityMode: AccentIntensityMode = mutableState.value.accentIntensityMode,
         accentIntensityRanges: List<AccentIntensityRange> = mutableState.value.accentIntensityRanges,
+        musicalKey: String = mutableState.value.musicalKey,
         restartBeat: Boolean,
     ) {
         updateConfig(restartBeat = restartBeat) {
@@ -364,6 +408,7 @@ class MetronomeService : Service() {
                 beatAccentTypes = safeBeatAccentTypes,
                 accentIntensityMode = accentIntensityMode,
                 accentIntensityRanges = accentIntensityRanges,
+                musicalKey = musicalKey,
             )
         }
     }
@@ -379,6 +424,7 @@ class MetronomeService : Service() {
         wakeLock?.releaseIfHeld()
         vibrator?.cancel()
         tonePlayer?.release()
+        keyDronePlayer?.release()
         toneScope.cancel()
         hapticScope.cancel()
         serviceScope.cancel()
@@ -401,9 +447,12 @@ class MetronomeService : Service() {
 
         if (nextState.isRunning) {
             updateForegroundNotification()
+            syncKeyDrone()
             if (restartBeat) {
                 restartTicker(resetClock = true)
             }
+        } else {
+            syncKeyDrone()
         }
     }
 
@@ -462,6 +511,7 @@ class MetronomeService : Service() {
                         accentType = beatAccentType,
                         accentIntensityMode = beatState.accentIntensityMode,
                         accentIntensityRanges = beatState.accentIntensityRanges,
+                        beatSoundMode = beatState.beatSoundMode,
                     )
                 }
 
@@ -494,11 +544,21 @@ class MetronomeService : Service() {
         accentType: BeatAccentType,
         accentIntensityMode: AccentIntensityMode,
         accentIntensityRanges: List<AccentIntensityRange>,
+        beatSoundMode: BeatSoundMode,
     ) {
         if (!accentType.hasBeep) return
 
         toneScope.launch {
-            tonePlayer?.beep(accentType, accentIntensityMode, accentIntensityRanges)
+            tonePlayer?.beep(accentType, accentIntensityMode, accentIntensityRanges, beatSoundMode)
+        }
+    }
+
+    private fun syncKeyDrone() {
+        val state = mutableState.value
+        if (state.isRunning && state.keyDroneEnabled) {
+            keyDronePlayer?.start(state.musicalKey, state.keyDroneVolumePercent)
+        } else {
+            keyDronePlayer?.stop()
         }
     }
 
@@ -657,6 +717,7 @@ private fun MetronomeState.normalized(): MetronomeState {
         beatAccentTypes = safeBeatAccentTypes,
         accentIntensityMode = accentIntensityMode,
         accentIntensityRanges = accentIntensityRanges.normalizedAccentIntensityRanges(),
+        keyDroneVolumePercent = keyDroneVolumePercent.coerceIn(0, 100),
         currentBeatIndex = currentBeatIndex.coerceIn(1, safeBeatsPerMeasure),
         currentSubdivisionIndex = currentSubdivisionIndex.coerceIn(1, safeSubdivisionCount),
         playlistIndex = playlistIndex.coerceAtLeast(0),
@@ -686,6 +747,10 @@ private fun Intent.putMetronomeState(state: MetronomeState): Intent {
         .putExtra("accent_intensity_values", state.accentIntensityRanges.toValuePercentIntArray())
         .putExtra("haptics_enabled", state.hapticsEnabled)
         .putExtra("beep_enabled", state.beepEnabled)
+        .putExtra("beat_sound_mode", state.beatSoundMode.persistedValue)
+        .putExtra("key_drone_enabled", state.keyDroneEnabled)
+        .putExtra("key_drone_volume_percent", state.keyDroneVolumePercent)
+        .putExtra("musical_key", state.musicalKey)
         .putExtra("current_beat_index", state.currentBeatIndex)
         .putExtra("current_subdivision_index", state.currentSubdivisionIndex)
         .putExtra("playlist_index", state.playlistIndex)
@@ -708,6 +773,15 @@ private fun Intent.readMetronomeState(fallback: MetronomeState): MetronomeState 
         accentIntensityRanges = readAccentIntensityRanges(fallback.accentIntensityRanges),
         hapticsEnabled = getBooleanExtra("haptics_enabled", fallback.hapticsEnabled),
         beepEnabled = getBooleanExtra("beep_enabled", fallback.beepEnabled),
+        beatSoundMode = BeatSoundMode.fromPersistedValue(
+            getIntExtra("beat_sound_mode", fallback.beatSoundMode.persistedValue),
+        ),
+        keyDroneEnabled = getBooleanExtra("key_drone_enabled", fallback.keyDroneEnabled),
+        keyDroneVolumePercent = getIntExtra(
+            "key_drone_volume_percent",
+            fallback.keyDroneVolumePercent,
+        ),
+        musicalKey = getStringExtra("musical_key") ?: fallback.musicalKey,
         currentBeatIndex = getIntExtra("current_beat_index", fallback.currentBeatIndex),
         currentSubdivisionIndex = getIntExtra(
             "current_subdivision_index",
@@ -767,6 +841,10 @@ private const val RHYTHM_ACCENT_INTENSITY_MODE_KEY = "accent_intensity_mode"
 private const val RHYTHM_ACCENT_INTENSITY_RANGES_KEY = "accent_intensity_ranges"
 private const val RHYTHM_HAPTICS_ENABLED_KEY = "haptics_enabled"
 private const val RHYTHM_BEEP_ENABLED_KEY = "beep_enabled"
+private const val RHYTHM_BEAT_SOUND_MODE_KEY = "beat_sound_mode"
+private const val RHYTHM_KEY_DRONE_ENABLED_KEY = "key_drone_enabled"
+private const val RHYTHM_KEY_DRONE_VOLUME_PERCENT_KEY = "key_drone_volume_percent"
+private const val RHYTHM_MUSICAL_KEY_KEY = "musical_key"
 private const val RHYTHM_PLAYLIST_INDEX_KEY = "playlist_index"
 private const val RHYTHM_SONG_INDEX_KEY = "song_index"
 
@@ -786,6 +864,12 @@ internal fun Context.loadSavedRhythmState(): MetronomeState {
             .toAccentIntensityRanges(),
         hapticsEnabled = prefs.getBoolean(RHYTHM_HAPTICS_ENABLED_KEY, false),
         beepEnabled = prefs.getBoolean(RHYTHM_BEEP_ENABLED_KEY, false),
+        beatSoundMode = BeatSoundMode.fromPersistedValue(
+            prefs.getInt(RHYTHM_BEAT_SOUND_MODE_KEY, BeatSoundMode.Clicks.persistedValue),
+        ),
+        keyDroneEnabled = prefs.getBoolean(RHYTHM_KEY_DRONE_ENABLED_KEY, false),
+        keyDroneVolumePercent = prefs.getInt(RHYTHM_KEY_DRONE_VOLUME_PERCENT_KEY, 18),
+        musicalKey = prefs.getString(RHYTHM_MUSICAL_KEY_KEY, "C") ?: "C",
         playlistIndex = prefs.getInt(RHYTHM_PLAYLIST_INDEX_KEY, 0),
         songIndex = prefs.getInt(RHYTHM_SONG_INDEX_KEY, 0),
         beatClockStartedAtMs = SystemClock.elapsedRealtime(),
@@ -804,6 +888,10 @@ internal fun Context.saveRhythmState(state: MetronomeState) {
         putString(RHYTHM_ACCENT_INTENSITY_RANGES_KEY, normalizedState.accentIntensityRanges.toPersistedRangeString())
         putBoolean(RHYTHM_HAPTICS_ENABLED_KEY, normalizedState.hapticsEnabled)
         putBoolean(RHYTHM_BEEP_ENABLED_KEY, normalizedState.beepEnabled)
+        putInt(RHYTHM_BEAT_SOUND_MODE_KEY, normalizedState.beatSoundMode.persistedValue)
+        putBoolean(RHYTHM_KEY_DRONE_ENABLED_KEY, normalizedState.keyDroneEnabled)
+        putInt(RHYTHM_KEY_DRONE_VOLUME_PERCENT_KEY, normalizedState.keyDroneVolumePercent)
+        putString(RHYTHM_MUSICAL_KEY_KEY, normalizedState.musicalKey)
         putInt(RHYTHM_PLAYLIST_INDEX_KEY, normalizedState.playlistIndex)
         putInt(RHYTHM_SONG_INDEX_KEY, normalizedState.songIndex)
     }
@@ -881,42 +969,55 @@ private fun createBeatVibrationEffect(
     )
 }
 
-private class BeatTonePlayer {
+private class BeatTonePlayer(context: Context) {
     private var fallbackToneGenerator: ToneGenerator? = null
     private val toneGenerators = mutableMapOf<Int, ToneGenerator>()
+    private val soundPool = SoundPool.Builder()
+        .setMaxStreams(4)
+        .setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build(),
+        )
+        .build()
+    private val loadedWoodSounds = mutableSetOf<Int>()
+    private val woodBig: Int
+    private val woodMid: Int
+    private val woodLil: Int
+
+    init {
+        soundPool.setOnLoadCompleteListener { _, sampleId, status ->
+            if (status == 0) {
+                loadedWoodSounds += sampleId
+            }
+        }
+        woodBig = soundPool.load(context, R.raw.wood_big, 1)
+        woodMid = soundPool.load(context, R.raw.wood_mid, 1)
+        woodLil = soundPool.load(context, R.raw.wood_lil, 1)
+    }
 
     fun beep(
         accentType: BeatAccentType,
         accentIntensityMode: AccentIntensityMode,
         accentIntensityRanges: List<AccentIntensityRange>,
+        beatSoundMode: BeatSoundMode,
     ) {
         if (!accentType.hasBeep) return
 
         val volumePercent = accentIntensityMode.volumePercentFor(accentType, accentIntensityRanges)
         if (volumePercent <= 0) return
 
-        val toneGenerator = toneGenerator(volumePercent)
-            ?: fallbackToneGenerator()
-            ?: return
+        if (beatSoundMode == BeatSoundMode.Wood) {
+            playWood(accentType, volumePercent)
+            return
+        }
 
-        BeatTimingTrace.mark("beep startTone call")
-        toneGenerator.startTone(
-            when (accentType) {
-                BeatAccentType.Big -> ToneGenerator.TONE_PROP_BEEP
-                BeatAccentType.Medium -> ToneGenerator.TONE_PROP_ACK
-                BeatAccentType.Small -> ToneGenerator.TONE_PROP_NACK
-                BeatAccentType.Silent -> ToneGenerator.TONE_PROP_BEEP
-            },
-            when (accentType) {
-                BeatAccentType.Big -> BEEP_DURATION_MS
-                BeatAccentType.Medium -> 54
-                BeatAccentType.Small -> 46
-                BeatAccentType.Silent -> BEEP_DURATION_MS
-            },
-        )
+        playClick(accentType, volumePercent)
     }
 
     fun release() {
+        soundPool.release()
         fallbackToneGenerator?.release()
         fallbackToneGenerator = null
         toneGenerators.values.forEach { toneGenerator ->
@@ -943,6 +1044,142 @@ private class BeatTonePlayer {
                 fallbackToneGenerator = toneGenerator
             }
     }
+
+    private fun playWood(accentType: BeatAccentType, volumePercent: Int) {
+        val soundId = when (accentType) {
+            BeatAccentType.Big -> woodBig
+            BeatAccentType.Medium -> woodMid
+            BeatAccentType.Small -> woodLil
+            BeatAccentType.Silent -> 0
+        }
+        if (soundId == 0 || soundId !in loadedWoodSounds) {
+            playClick(accentType, volumePercent)
+            return
+        }
+
+        val volume = (volumePercent / 100f).coerceIn(0f, 1f)
+        BeatTimingTrace.mark("wood soundPool play")
+        soundPool.play(soundId, volume, volume, 1, 0, 1f)
+    }
+
+    private fun playClick(accentType: BeatAccentType, volumePercent: Int) {
+        val toneGenerator = toneGenerator(volumePercent)
+            ?: fallbackToneGenerator()
+            ?: return
+
+        BeatTimingTrace.mark("beep startTone call")
+        toneGenerator.startTone(
+            when (accentType) {
+                BeatAccentType.Big -> ToneGenerator.TONE_PROP_BEEP
+                BeatAccentType.Medium -> ToneGenerator.TONE_PROP_ACK
+                BeatAccentType.Small -> ToneGenerator.TONE_PROP_NACK
+                BeatAccentType.Silent -> ToneGenerator.TONE_PROP_BEEP
+            },
+            when (accentType) {
+                BeatAccentType.Big -> BEEP_DURATION_MS
+                BeatAccentType.Medium -> 54
+                BeatAccentType.Small -> 46
+                BeatAccentType.Silent -> BEEP_DURATION_MS
+            },
+        )
+    }
+}
+
+private class KeyDronePlayer {
+    private var audioTrack: AudioTrack? = null
+    private var activeKey: String? = null
+    private var activeVolumePercent: Int = -1
+
+    fun start(musicalKey: String, volumePercent: Int) {
+        val rootFrequency = musicalKey.rootFrequencyHz() ?: return
+        val safeVolumePercent = volumePercent.coerceIn(0, 100)
+        if (safeVolumePercent <= 0) {
+            stop()
+            return
+        }
+        if (
+            audioTrack?.playState == AudioTrack.PLAYSTATE_PLAYING &&
+            activeKey == musicalKey &&
+            activeVolumePercent == safeVolumePercent
+        ) {
+            return
+        }
+
+        stop()
+        val sampleRate = 22_050
+        val samples = sampleRate
+        val data = ByteArray(samples * 2)
+        for (index in 0 until samples) {
+            val phase = index.toDouble() / sampleRate.toDouble()
+            val root = sin(2.0 * PI * rootFrequency * phase)
+            val fifth = sin(2.0 * PI * rootFrequency * 1.5 * phase)
+            val value = ((root * 0.62 + fifth * 0.38) * (safeVolumePercent / 100.0)).coerceIn(-1.0, 1.0)
+            val sample = (value * Short.MAX_VALUE).toInt().toShort()
+            data[index * 2] = (sample.toInt() and 0xff).toByte()
+            data[index * 2 + 1] = ((sample.toInt() shr 8) and 0xff).toByte()
+        }
+
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build(),
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(sampleRate)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build(),
+            )
+            .setBufferSizeInBytes(data.size)
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .build()
+
+        track.write(data, 0, data.size)
+        track.setLoopPoints(0, samples, -1)
+        track.play()
+        audioTrack = track
+        activeKey = musicalKey
+        activeVolumePercent = safeVolumePercent
+    }
+
+    fun stop() {
+        audioTrack?.let { track ->
+            runCatching { track.stop() }
+            track.release()
+        }
+        audioTrack = null
+        activeKey = null
+        activeVolumePercent = -1
+    }
+
+    fun release() {
+        stop()
+    }
+}
+
+private fun String.rootFrequencyHz(): Double? {
+    val cleaned = trim().replace("\u266f", "#").replace("\u266d", "b")
+    val root = Regex("^[A-Ga-g](#|b)?").find(cleaned)?.value ?: return null
+    val semitone = when (root.replaceFirstChar { it.uppercase() }) {
+        "C" -> 0
+        "C#", "Db" -> 1
+        "D" -> 2
+        "D#", "Eb" -> 3
+        "E" -> 4
+        "F" -> 5
+        "F#", "Gb" -> 6
+        "G" -> 7
+        "G#", "Ab" -> 8
+        "A" -> 9
+        "A#", "Bb" -> 10
+        "B" -> 11
+        else -> return null
+    }
+    val midiNote = 48 + semitone
+    return 440.0 * Math.pow(2.0, (midiNote - 69) / 12.0)
 }
 
 internal fun defaultBeatAccentTypes(
