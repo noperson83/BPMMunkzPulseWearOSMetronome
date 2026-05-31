@@ -9,7 +9,7 @@
         android:label="@string/watch_face_name">
         <property
             android:name="com.google.wear.watchface.format.version"
-            android:value="4" />
+            android:value="1" />
         <property
             android:name="com.google.wear.watchface.format.publisher"
             android:value="BPMMunkzPulse" />

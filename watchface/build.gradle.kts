@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.bpmmunkzface"
-        minSdk = 36
+        minSdk = 33
         targetSdk = 36
         versionCode = 2
         versionName = "1.0"

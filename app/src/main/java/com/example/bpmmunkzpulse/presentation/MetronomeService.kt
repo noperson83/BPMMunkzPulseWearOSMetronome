@@ -72,7 +72,8 @@ enum class BeatAccentType(val persistedValue: Int) {
 
 enum class BeatSoundMode(val persistedValue: Int) {
     Clicks(0),
-    Wood(1);
+    Wood(1),
+    Bell(2);
 
     companion object {
         fun fromPersistedValue(value: Int): BeatSoundMode {
@@ -141,6 +142,7 @@ data class MetronomeState(
     val keyDroneEnabled: Boolean = false,
     val keyDroneVolumePercent: Int = 18,
     val musicalKey: String = "C",
+    val tempoNudgeMs: Int = 200,
     val currentBeatIndex: Int = 1,
     val currentSubdivisionIndex: Int = 1,
     val playlistIndex: Int = 0,
@@ -367,6 +369,30 @@ class MetronomeService : Service() {
         }
     }
 
+    fun setTempoNudgeMs(tempoNudgeMs: Int) {
+        updateConfig(restartBeat = false) {
+            it.copy(tempoNudgeMs = tempoNudgeMs.coerceIn(50, 250))
+        }
+    }
+
+    fun pushTempoPhase(deltaMs: Int) {
+        if (deltaMs == 0) return
+        val previousState = mutableState.value
+        val nextState = previousState.copy(
+            beatClockStartedAtMs = if (previousState.isRunning) {
+                previousState.beatClockStartedAtMs - deltaMs
+            } else {
+                previousState.beatClockStartedAtMs
+            },
+        ).normalized()
+        if (nextState == previousState) return
+
+        mutableState.value = nextState
+        if (nextState.isRunning) {
+            restartTicker(resetClock = false)
+        }
+    }
+
     fun setAccentIntensityMode(accentIntensityMode: AccentIntensityMode) {
         updateConfig(restartBeat = false) {
             it.copy(accentIntensityMode = accentIntensityMode)
@@ -390,6 +416,7 @@ class MetronomeService : Service() {
         accentIntensityMode: AccentIntensityMode = mutableState.value.accentIntensityMode,
         accentIntensityRanges: List<AccentIntensityRange> = mutableState.value.accentIntensityRanges,
         musicalKey: String = mutableState.value.musicalKey,
+        tempoNudgeMs: Int = mutableState.value.tempoNudgeMs,
         restartBeat: Boolean,
     ) {
         updateConfig(restartBeat = restartBeat) {
@@ -409,6 +436,7 @@ class MetronomeService : Service() {
                 accentIntensityMode = accentIntensityMode,
                 accentIntensityRanges = accentIntensityRanges,
                 musicalKey = musicalKey,
+                tempoNudgeMs = tempoNudgeMs,
             )
         }
     }
@@ -458,20 +486,27 @@ class MetronomeService : Service() {
 
     private fun restartTicker(resetClock: Boolean) {
         metronomeJob?.cancel()
+        val now = SystemClock.elapsedRealtime()
         mutableState.update {
             it.copy(
                 beatFlash = false,
                 flashingBeat = 0,
                 currentSubdivisionIndex = 1,
-                beatClockStartedAtMs = if (resetClock) SystemClock.elapsedRealtime() else it.beatClockStartedAtMs,
+                beatClockStartedAtMs = if (resetClock) now else it.beatClockStartedAtMs,
             )
         }
 
         metronomeJob = serviceScope.launch {
-            var beat = mutableState.value.currentBeatIndex.coerceIn(1, mutableState.value.beatsPerMeasure)
-            var nextBeatStartedAtMs = SystemClock.elapsedRealtime()
-            mutableState.update {
-                it.copy(beatClockStartedAtMs = nextBeatStartedAtMs)
+            val tickerState = mutableState.value
+            val intervalMs = (60_000L / tickerState.bpm).coerceAtLeast(1L)
+            val elapsedMs = (SystemClock.elapsedRealtime() - tickerState.beatClockStartedAtMs).coerceAtLeast(0L)
+            val elapsedBeats = elapsedMs / intervalMs
+            var beat = (((elapsedBeats % tickerState.beatsPerMeasure.coerceAtLeast(1)) + 1L).toInt())
+                .coerceIn(1, tickerState.beatsPerMeasure.coerceAtLeast(1))
+            var nextBeatStartedAtMs = tickerState.beatClockStartedAtMs + elapsedBeats * intervalMs
+            if (!resetClock && nextBeatStartedAtMs < SystemClock.elapsedRealtime() - BEAT_FLASH_DURATION_MS) {
+                nextBeatStartedAtMs += intervalMs
+                beat = if (beat == tickerState.beatsPerMeasure) 1 else beat + 1
             }
 
             while (isActive && mutableState.value.isRunning) {
@@ -718,6 +753,7 @@ private fun MetronomeState.normalized(): MetronomeState {
         accentIntensityMode = accentIntensityMode,
         accentIntensityRanges = accentIntensityRanges.normalizedAccentIntensityRanges(),
         keyDroneVolumePercent = keyDroneVolumePercent.coerceIn(0, 100),
+        tempoNudgeMs = tempoNudgeMs.coerceIn(50, 250),
         currentBeatIndex = currentBeatIndex.coerceIn(1, safeBeatsPerMeasure),
         currentSubdivisionIndex = currentSubdivisionIndex.coerceIn(1, safeSubdivisionCount),
         playlistIndex = playlistIndex.coerceAtLeast(0),
@@ -751,6 +787,7 @@ private fun Intent.putMetronomeState(state: MetronomeState): Intent {
         .putExtra("key_drone_enabled", state.keyDroneEnabled)
         .putExtra("key_drone_volume_percent", state.keyDroneVolumePercent)
         .putExtra("musical_key", state.musicalKey)
+        .putExtra("tempo_nudge_ms", state.tempoNudgeMs)
         .putExtra("current_beat_index", state.currentBeatIndex)
         .putExtra("current_subdivision_index", state.currentSubdivisionIndex)
         .putExtra("playlist_index", state.playlistIndex)
@@ -782,6 +819,7 @@ private fun Intent.readMetronomeState(fallback: MetronomeState): MetronomeState 
             fallback.keyDroneVolumePercent,
         ),
         musicalKey = getStringExtra("musical_key") ?: fallback.musicalKey,
+        tempoNudgeMs = getIntExtra("tempo_nudge_ms", fallback.tempoNudgeMs),
         currentBeatIndex = getIntExtra("current_beat_index", fallback.currentBeatIndex),
         currentSubdivisionIndex = getIntExtra(
             "current_subdivision_index",
@@ -845,6 +883,7 @@ private const val RHYTHM_BEAT_SOUND_MODE_KEY = "beat_sound_mode"
 private const val RHYTHM_KEY_DRONE_ENABLED_KEY = "key_drone_enabled"
 private const val RHYTHM_KEY_DRONE_VOLUME_PERCENT_KEY = "key_drone_volume_percent"
 private const val RHYTHM_MUSICAL_KEY_KEY = "musical_key"
+private const val RHYTHM_TEMPO_NUDGE_MS_KEY = "tempo_nudge_ms"
 private const val RHYTHM_PLAYLIST_INDEX_KEY = "playlist_index"
 private const val RHYTHM_SONG_INDEX_KEY = "song_index"
 
@@ -870,6 +909,8 @@ internal fun Context.loadSavedRhythmState(): MetronomeState {
         keyDroneEnabled = prefs.getBoolean(RHYTHM_KEY_DRONE_ENABLED_KEY, false),
         keyDroneVolumePercent = prefs.getInt(RHYTHM_KEY_DRONE_VOLUME_PERCENT_KEY, 18),
         musicalKey = prefs.getString(RHYTHM_MUSICAL_KEY_KEY, "C") ?: "C",
+        tempoNudgeMs = prefs.getInt(RHYTHM_TEMPO_NUDGE_MS_KEY, 200)
+            .let { value -> if (value in 50..250) value else 200 },
         playlistIndex = prefs.getInt(RHYTHM_PLAYLIST_INDEX_KEY, 0),
         songIndex = prefs.getInt(RHYTHM_SONG_INDEX_KEY, 0),
         beatClockStartedAtMs = SystemClock.elapsedRealtime(),
@@ -892,6 +933,7 @@ internal fun Context.saveRhythmState(state: MetronomeState) {
         putBoolean(RHYTHM_KEY_DRONE_ENABLED_KEY, normalizedState.keyDroneEnabled)
         putInt(RHYTHM_KEY_DRONE_VOLUME_PERCENT_KEY, normalizedState.keyDroneVolumePercent)
         putString(RHYTHM_MUSICAL_KEY_KEY, normalizedState.musicalKey)
+        putInt(RHYTHM_TEMPO_NUDGE_MS_KEY, normalizedState.tempoNudgeMs)
         putInt(RHYTHM_PLAYLIST_INDEX_KEY, normalizedState.playlistIndex)
         putInt(RHYTHM_SONG_INDEX_KEY, normalizedState.songIndex)
     }
@@ -981,20 +1023,26 @@ private class BeatTonePlayer(context: Context) {
                 .build(),
         )
         .build()
-    private val loadedWoodSounds = mutableSetOf<Int>()
+    private val loadedBeatSounds = mutableSetOf<Int>()
     private val woodBig: Int
     private val woodMid: Int
     private val woodLil: Int
+    private val bellBig: Int
+    private val bellMid: Int
+    private val bellLil: Int
 
     init {
         soundPool.setOnLoadCompleteListener { _, sampleId, status ->
             if (status == 0) {
-                loadedWoodSounds += sampleId
+                loadedBeatSounds += sampleId
             }
         }
         woodBig = soundPool.load(context, R.raw.wood_big, 1)
         woodMid = soundPool.load(context, R.raw.wood_mid, 1)
         woodLil = soundPool.load(context, R.raw.wood_lil, 1)
+        bellBig = soundPool.load(context, R.raw.bell_big, 1)
+        bellMid = soundPool.load(context, R.raw.bell_mid, 1)
+        bellLil = soundPool.load(context, R.raw.bell_lil, 1)
     }
 
     fun beep(
@@ -1008,9 +1056,30 @@ private class BeatTonePlayer(context: Context) {
         val volumePercent = accentIntensityMode.volumePercentFor(accentType, accentIntensityRanges)
         if (volumePercent <= 0) return
 
-        if (beatSoundMode == BeatSoundMode.Wood) {
-            playWood(accentType, volumePercent)
-            return
+        when (beatSoundMode) {
+            BeatSoundMode.Clicks -> Unit
+            BeatSoundMode.Wood -> {
+                playSample(
+                    accentType = accentType,
+                    volumePercent = volumePercent,
+                    bigSoundId = woodBig,
+                    mediumSoundId = woodMid,
+                    smallSoundId = woodLil,
+                    timingLabel = "dwood soundPool play",
+                )
+                return
+            }
+            BeatSoundMode.Bell -> {
+                playSample(
+                    accentType = accentType,
+                    volumePercent = volumePercent,
+                    bigSoundId = bellBig,
+                    mediumSoundId = bellMid,
+                    smallSoundId = bellLil,
+                    timingLabel = "bell soundPool play",
+                )
+                return
+            }
         }
 
         playClick(accentType, volumePercent)
@@ -1045,20 +1114,27 @@ private class BeatTonePlayer(context: Context) {
             }
     }
 
-    private fun playWood(accentType: BeatAccentType, volumePercent: Int) {
+    private fun playSample(
+        accentType: BeatAccentType,
+        volumePercent: Int,
+        bigSoundId: Int,
+        mediumSoundId: Int,
+        smallSoundId: Int,
+        timingLabel: String,
+    ) {
         val soundId = when (accentType) {
-            BeatAccentType.Big -> woodBig
-            BeatAccentType.Medium -> woodMid
-            BeatAccentType.Small -> woodLil
+            BeatAccentType.Big -> bigSoundId
+            BeatAccentType.Medium -> mediumSoundId
+            BeatAccentType.Small -> smallSoundId
             BeatAccentType.Silent -> 0
         }
-        if (soundId == 0 || soundId !in loadedWoodSounds) {
+        if (soundId == 0 || soundId !in loadedBeatSounds) {
             playClick(accentType, volumePercent)
             return
         }
 
         val volume = (volumePercent / 100f).coerceIn(0f, 1f)
-        BeatTimingTrace.mark("wood soundPool play")
+        BeatTimingTrace.mark(timingLabel)
         soundPool.play(soundId, volume, volume, 1, 0, 1f)
     }
 

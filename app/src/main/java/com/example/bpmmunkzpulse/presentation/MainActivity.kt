@@ -44,6 +44,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -71,6 +72,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -124,6 +126,7 @@ import com.example.bpmmunkzpulse.R
 import com.example.bpmmunkzpulse.presentation.theme.BPMMunkzPulseTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -178,6 +181,10 @@ private const val SETTINGS_CLOCK_IMAGE_INDEX_KEY = "clock_image_index"
 private const val SETTINGS_RING_COLOR_KEY = "ring_color"
 private const val SETTINGS_RING_MODE_KEY = "ring_mode"
 private const val SETTINGS_LANGUAGE_INDEX_KEY = "language_index"
+private const val DEFAULT_TEMPO_NUDGE_MS = 200
+private const val MIN_TEMPO_NUDGE_MS = 50
+private const val MAX_TEMPO_NUDGE_MS = 250
+private const val TEMPO_NUDGE_STEP_MS = 50
 private const val PLAYLIST_PREFS = "bpm_munkz_playlists"
 private const val PLAYLIST_LIBRARY_KEY = "playlist_library"
 
@@ -510,8 +517,10 @@ private data class AppText(
     val haptics: String,
     val beep: String,
     val wood: String,
+    val bell: String,
     val drone: String,
     val droneVolume: String,
+    val visualNudge: String,
     val intensity: String,
     val intensityTitle: String,
     val a4Reference: String,
@@ -647,9 +656,11 @@ private fun appTextFor(language: AppLanguage): AppText {
             bigPulse = "Big pulse",
             haptics = "Vibe",
             beep = "Beep",
-            wood = "Wood",
+            wood = "DWood",
+            bell = "Bell",
             drone = "Drone",
             droneVolume = "Drone Vol",
+            visualNudge = "Tempo Push",
             intensity = "Beep & Vibe",
             intensityTitle = "Beep & Vibe\nIntensity",
             a4Reference = "A4 Ref",
@@ -709,9 +720,11 @@ private fun appTextFor(language: AppLanguage): AppText {
             bigPulse = "Pulso grande",
             haptics = "Vibra",
             beep = "Pitido",
-            wood = "Madera",
+            wood = "DWood",
+            bell = "Bell",
             drone = "Drone",
             droneVolume = "Vol Drone",
+            visualNudge = "Empuje tempo",
             intensity = "Pitido y Vibra",
             intensityTitle = "Pitido/Vibra\nIntensidad",
             a4Reference = "Ref A4",
@@ -872,6 +885,7 @@ fun BeatPulseScreen(
     val beatSoundMode = metronomeState.beatSoundMode
     val keyDroneEnabled = metronomeState.keyDroneEnabled
     val keyDroneVolumePercent = metronomeState.keyDroneVolumePercent
+    val tempoNudgeMs = metronomeState.tempoNudgeMs
     var keepScreenMode by rememberSaveable {
         mutableStateOf(if (isPreview) KeepScreenMode.WatchTimeout else context.loadKeepScreenMode())
     }
@@ -975,6 +989,8 @@ fun BeatPulseScreen(
     var playlistRhythmEditorPopupOpen by rememberSaveable { mutableStateOf(false) }
     var rhythmEditorPopupOpen by rememberSaveable { mutableStateOf(false) }
     var tapTempoPopupOpen by rememberSaveable { mutableStateOf(false) }
+    var freeTapKeyPickerOpen by rememberSaveable { mutableStateOf(false) }
+    var freeTapTimeSignaturePickerOpen by rememberSaveable { mutableStateOf(false) }
     var tunerOverlayOpen by rememberSaveable { mutableStateOf(false) }
     var spectrumOverlayOpen by rememberSaveable { mutableStateOf(false) }
     var tunerListenProfile by rememberSaveable { mutableStateOf(TunerListenProfile.Full) }
@@ -1102,12 +1118,16 @@ fun BeatPulseScreen(
             SystemClock.elapsedRealtime() < quietPulseVisualsUntilMs
     }
 
-    fun shouldShowTapTempoPageBigRing(): Boolean {
+    fun shouldShowPagerBigRing(): Boolean {
         return bigRingFlashMode != BigRingFlashMode.Off &&
-            pagerState.currentPage == TAP_TEMPO_FREE_PAGE_INDEX &&
+            pagerState.currentPage in MAIN_PAGE_INDEX until PULSE_PAGE_COUNT &&
             !pagerIsMovingOrBetweenPages() &&
             !pointerIsPreparingGesture() &&
             !tapTempoPopupOpen &&
+            !freeTapKeyPickerOpen &&
+            !freeTapTimeSignaturePickerOpen &&
+            !audioOverlayOpen &&
+            !rhythmEditorPopupOpen &&
             !tunerOverlayOpen &&
             !spectrumOverlayOpen &&
             !playlistEditorPopupOpen
@@ -1125,6 +1145,7 @@ fun BeatPulseScreen(
         }
 
         val shouldShowFullPulse =
+            shouldShowPagerBigRing() ||
             (!playlistEditorPopupOpen || playlistRhythmEditorPopupOpen || rhythmEditorPopupOpen) &&
             (
                 tapTempoPopupOpen ||
@@ -1151,12 +1172,16 @@ fun BeatPulseScreen(
         playlistEditorPopupOpen,
         playlistRhythmEditorPopupOpen,
         rhythmEditorPopupOpen,
+        freeTapKeyPickerOpen,
+        freeTapTimeSignaturePickerOpen,
         audioOverlayOpen,
+        tunerOverlayOpen,
+        spectrumOverlayOpen,
         bigRingFlashMode,
     ) {
         metronomeService?.state?.collect { state ->
             val nextState = filterMetronomeStateForVisibleUi(state)
-            val shouldUpdateRingVisuals = shouldShowTapTempoPageBigRing() &&
+            val shouldUpdateRingVisuals = shouldShowPagerBigRing() &&
                 nextState.hasDifferentPulseVisualsFrom(metronomeState)
             val shouldUpdateNow = !state.isRunning ||
                 !nextState.hasSameNonVisualStateAs(metronomeState) ||
@@ -1175,7 +1200,11 @@ fun BeatPulseScreen(
         playlistEditorPopupOpen,
         playlistRhythmEditorPopupOpen,
         rhythmEditorPopupOpen,
+        freeTapKeyPickerOpen,
+        freeTapTimeSignaturePickerOpen,
         audioOverlayOpen,
+        tunerOverlayOpen,
+        spectrumOverlayOpen,
         bigRingFlashMode,
     ) {
         snapshotFlow {
@@ -1184,7 +1213,7 @@ fun BeatPulseScreen(
             if (!pagerIsMovingOrBetweenPages) {
                 metronomeService?.state?.value?.let { state ->
                     val nextState = filterMetronomeStateForVisibleUi(state)
-                    val shouldUpdateRingVisuals = shouldShowTapTempoPageBigRing() &&
+                    val shouldUpdateRingVisuals = shouldShowPagerBigRing() &&
                         nextState.hasDifferentPulseVisualsFrom(metronomeState)
                     if (
                         (
@@ -1237,6 +1266,7 @@ fun BeatPulseScreen(
             beatAccentTypes = song.beatAccentTypes,
             accentIntensityMode = song.accentIntensityMode,
             musicalKey = song.musicalKey,
+            tempoNudgeMs = tempoNudgeMs,
             restartBeat = restartBeat,
         )
     }
@@ -1262,6 +1292,74 @@ fun BeatPulseScreen(
 
     fun updateCurrentSong(update: (PlaylistSong) -> PlaylistSong) {
         playlists = playlists.updateSong(playlistIndex, songIndex, update)
+    }
+
+    fun setCurrentSongTimeSignature(beatChoice: Int) {
+        val nextBeatChoice = beatChoice.coerceIn(2, 16)
+        val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
+            song.copy(beatsPerMeasure = nextBeatChoice)
+        }
+        playlists = nextPlaylists
+        if (!isPreview) {
+            context.saveSavedPlaylists(nextPlaylists)
+        }
+        metronomeService?.setPlaylistItem(
+            playlistIndex = playlistIndex,
+            songIndex = songIndex,
+            bpm = currentSong.bpm,
+            beatsPerMeasure = nextBeatChoice,
+            accentBeat = currentSong.accentBeat.coerceIn(1, nextBeatChoice),
+            subdivisionCount = currentSong.subdivisionCount,
+            beatAccentTypes = currentSong.beatAccentTypes,
+            accentIntensityMode = currentSong.accentIntensityMode,
+            musicalKey = currentSong.musicalKey,
+            restartBeat = isRunning,
+        )
+    }
+
+    fun setCurrentSongSubdivision(subdivision: Int) {
+        val nextSubdivision = subdivision.toSupportedSubdivisionCount()
+        val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
+            song.copy(subdivisionCount = nextSubdivision)
+        }
+        playlists = nextPlaylists
+        if (!isPreview) {
+            context.saveSavedPlaylists(nextPlaylists)
+        }
+        metronomeService?.setPlaylistItem(
+            playlistIndex = playlistIndex,
+            songIndex = songIndex,
+            bpm = currentSong.bpm,
+            beatsPerMeasure = currentSong.beatsPerMeasure,
+            accentBeat = currentSong.accentBeat,
+            subdivisionCount = nextSubdivision,
+            beatAccentTypes = currentSong.beatAccentTypes,
+            accentIntensityMode = currentSong.accentIntensityMode,
+            musicalKey = currentSong.musicalKey,
+            restartBeat = isRunning,
+        )
+    }
+
+    fun setCurrentSongKey(key: String) {
+        val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
+            song.copy(musicalKey = key)
+        }
+        playlists = nextPlaylists
+        if (!isPreview) {
+            context.saveSavedPlaylists(nextPlaylists)
+        }
+        metronomeService?.setPlaylistItem(
+            playlistIndex = playlistIndex,
+            songIndex = songIndex,
+            bpm = currentSong.bpm,
+            beatsPerMeasure = currentSong.beatsPerMeasure,
+            accentBeat = currentSong.accentBeat,
+            subdivisionCount = currentSong.subdivisionCount,
+            beatAccentTypes = currentSong.beatAccentTypes,
+            accentIntensityMode = currentSong.accentIntensityMode,
+            musicalKey = key,
+            restartBeat = false,
+        )
     }
 
     fun saveCurrentRhythmToSong() {
@@ -1348,6 +1446,7 @@ fun BeatPulseScreen(
                 playlistIndex = playlistIndex,
                 songIndex = songIndex,
                 musicalKey = currentSong.musicalKey,
+                tempoNudgeMs = tempoNudgeMs,
             )
             metronomeState = nextState
             MetronomeService.start(
@@ -1480,9 +1579,9 @@ fun BeatPulseScreen(
                 }
                 .background(backgroundColor),
         ) {
-            val tapTempoPageBigRingVisible = shouldShowTapTempoPageBigRing()
+            val pagerBigRingVisible = shouldShowPagerBigRing()
             BigPulseRingOverlay(
-                beatFlash = beatFlash && tapTempoPageBigRingVisible,
+                beatFlash = beatFlash && pagerBigRingVisible,
                 flashingAccentType = beatAccentTypes.typeForBeat(flashingBeat),
                 bigRingFlashMode = bigRingFlashMode,
                 colorArgb = bigPulseRingColorArgb,
@@ -1522,6 +1621,7 @@ fun BeatPulseScreen(
                         beatFlash = beatFlash,
                         isRunning = isRunning,
                         beatClockStartedAtMs = beatClockStartedAtMs,
+                        tempoNudgeMs = tempoNudgeMs,
                         playbackStartedAtMs = playbackStartedAtMs,
                         beatVisualsEnabled = pagerState.currentPage == RHYTHM_PAGE_INDEX &&
                             !pagerState.isScrollInProgress &&
@@ -1535,6 +1635,9 @@ fun BeatPulseScreen(
                         onToggleRunning = toggleRunning,
                         onBpmClick = {
                             tapTempoPopupOpen = true
+                        },
+                        onTempoNudge = { step ->
+                            metronomeService?.pushTempoPhase(step)
                         },
                         onOpenTuner = {
                             tunerOverlayOpen = true
@@ -1551,6 +1654,7 @@ fun BeatPulseScreen(
                     beatSoundMode = beatSoundMode,
                     keyDroneEnabled = keyDroneEnabled,
                     keyDroneVolumePercent = keyDroneVolumePercent,
+                    tempoNudgeMs = tempoNudgeMs,
                     accentIntensityMode = accentIntensityMode,
                     accentIntensityRanges = metronomeState.accentIntensityRanges,
                     a4ReferenceHz = a4ReferenceHz,
@@ -1581,15 +1685,15 @@ fun BeatPulseScreen(
                         }
                         metronomeService?.setBeepEnabled(nextBeepEnabled)
                     },
-                    onBeatSoundModeToggle = {
-                        val nextBeatSoundMode = if (beatSoundMode == BeatSoundMode.Wood) {
+                    onBeatSoundModeChoice = { mode ->
+                        val nextBeatSoundMode = if (beatSoundMode == mode) {
                             BeatSoundMode.Clicks
                         } else {
-                            BeatSoundMode.Wood
+                            mode
                         }
                         val nextState = metronomeState.copy(
                             beatSoundMode = nextBeatSoundMode,
-                            beepEnabled = if (nextBeatSoundMode == BeatSoundMode.Wood) true else beepEnabled,
+                            beepEnabled = if (nextBeatSoundMode != BeatSoundMode.Clicks) true else beepEnabled,
                         )
                         metronomeState = nextState
                         if (!isPreview) {
@@ -1620,6 +1724,16 @@ fun BeatPulseScreen(
                             context.saveRhythmState(nextState)
                         }
                         metronomeService?.setKeyDroneVolumePercent(nextVolume)
+                    },
+                    onTempoNudgeChange = { step ->
+                        val nextNudgeMs = (tempoNudgeMs + step)
+                            .coerceIn(MIN_TEMPO_NUDGE_MS, MAX_TEMPO_NUDGE_MS)
+                        val nextState = metronomeState.copy(tempoNudgeMs = nextNudgeMs)
+                        metronomeState = nextState
+                        if (!isPreview) {
+                            context.saveRhythmState(nextState)
+                        }
+                        metronomeService?.setTempoNudgeMs(nextNudgeMs)
                     },
                     onAccentIntensityModeChoice = { mode ->
                         val nextState = metronomeState.copy(accentIntensityMode = mode)
@@ -1723,6 +1837,12 @@ fun BeatPulseScreen(
                         onIncrease = increaseBpm,
                         onIncreaseLarge = increaseBpmLarge,
                         onToggleRunning = toggleRunning,
+                        onTimeSignatureClick = {
+                            freeTapTimeSignaturePickerOpen = true
+                        },
+                        onKeyClick = {
+                            freeTapKeyPickerOpen = true
+                        },
                     )
                 }
             }
@@ -2014,6 +2134,38 @@ fun BeatPulseScreen(
                 )
             }
 
+            if (freeTapTimeSignaturePickerOpen) {
+                RhythmTimingChoicePopup(
+                    appText = appText,
+                    initialPicker = RhythmChoicePicker.TimeSignature,
+                    beatsPerMeasure = currentSong.beatsPerMeasure,
+                    subdivisionCount = currentSong.subdivisionCount,
+                    onTimeSignatureChoice = { option ->
+                        setCurrentSongTimeSignature(option)
+                    },
+                    onSubdivisionChoice = { option ->
+                        setCurrentSongSubdivision(option)
+                    },
+                    onDismiss = {
+                        freeTapTimeSignaturePickerOpen = false
+                    },
+                )
+            }
+
+            if (freeTapKeyPickerOpen) {
+                MusicalKeyPickerPopup(
+                    value = currentSong.musicalKey,
+                    doneText = appText.done,
+                    onCancel = {
+                        freeTapKeyPickerOpen = false
+                    },
+                    onCommit = { nextKey ->
+                        setCurrentSongKey(nextKey)
+                        freeTapKeyPickerOpen = false
+                    },
+                )
+            }
+
             if (tunerOverlayOpen) {
                 AnalyzerOverlay(
                     closeText = appText.done,
@@ -2086,6 +2238,8 @@ private fun TapTempoFree(
     onIncrease: () -> Unit,
     onIncreaseLarge: () -> Unit,
     onToggleRunning: () -> Unit,
+    onTimeSignatureClick: () -> Unit,
+    onKeyClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -2100,10 +2254,16 @@ private fun TapTempoFree(
             onDecreaseLarge = onDecreaseLarge,
             onIncrease = onIncrease,
             onIncreaseLarge = onIncreaseLarge,
+            prominentTempoButtons = true,
         ) {
-            StartStopButton(
-                appText = appText,
-                isRunning = isRunning,
+            GlassCommandButton(
+                text = if (isRunning) appText.stopUpper else appText.startUpper,
+                modifier = Modifier
+                    .width(104.dp)
+                    .height(30.dp),
+                fontSize = 15.sp,
+                selected = isRunning,
+                prominent = true,
                 onClick = onToggleRunning,
             )
         }
@@ -2121,28 +2281,30 @@ private fun TapTempoFree(
             )
         }
 
-        Text(
+        GlassCommandButton(
             text = "$beatsPerMeasure/4 x$subdivisionCount",
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 22.dp, bottom = 60.dp),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
+                .padding(start = 20.dp, bottom = 57.dp)
+                .width(54.dp)
+                .height(24.dp),
+            fontSize = 10.sp,
+            selected = false,
+            prominent = false,
+            onClick = onTimeSignatureClick,
         )
 
-        Text(
+        GlassCommandButton(
             text = musicalKey,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 20.dp, bottom = 60.dp)
-                .width(58.dp),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
+                .padding(end = 20.dp, bottom = 57.dp)
+                .width(54.dp)
+                .height(24.dp),
+            fontSize = 10.sp,
+            selected = false,
+            prominent = false,
+            onClick = onKeyClick,
         )
     }
 }
@@ -2162,6 +2324,7 @@ private fun TapTempoControls(
     readoutBottomSpacing: Dp = 8.dp,
     adjustRowOffsetY: Dp = 0.dp,
     footerTopSpacing: Dp = 6.dp,
+    prominentTempoButtons: Boolean = false,
     header: @Composable () -> Unit = {},
     footer: @Composable () -> Unit,
 ) {
@@ -2187,11 +2350,13 @@ private fun TapTempoControls(
                 onClick = onDecrease,
                 onLongClick = onDecreaseLarge,
                 onLongClickLabel = appText.decreaseBpmBy5,
+                prominent = prominentTempoButtons,
             )
 
             FastTapTempoButton(
                 text = appText.tap,
                 onTap = onTapTempo,
+                prominent = prominentTempoButtons,
             )
 
             TempoAdjustButton(
@@ -2199,6 +2364,7 @@ private fun TapTempoControls(
                 onClick = onIncrease,
                 onLongClick = onIncreaseLarge,
                 onLongClickLabel = appText.increaseBpmBy5,
+                prominent = prominentTempoButtons,
             )
         }
 
@@ -2245,7 +2411,8 @@ private fun TapTempoPopup(
             readoutOffsetY = 0.dp,
             readoutBottomSpacing = 0.dp,
             adjustRowOffsetY = (-6).dp,
-            footerTopSpacing = 0.dp,
+            footerTopSpacing = 6.dp,
+            prominentTempoButtons = true,
             header = {
                 AudioToolButtons(
                     appText = appText,
@@ -2261,21 +2428,28 @@ private fun TapTempoPopup(
             },
         ) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(0.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                StartStopButton(
-                    appText = appText,
-                    isRunning = isRunning,
+                GlassCommandButton(
+                    text = if (isRunning) appText.stopUpper else appText.startUpper,
+                    modifier = Modifier
+                        .width(104.dp)
+                        .height(30.dp),
+                    fontSize = 15.sp,
+                    selected = isRunning,
+                    prominent = true,
                     onClick = onToggleRunning,
                 )
 
-                SmallCommandButton(
+                GlassCommandButton(
                     text = appText.done,
                     modifier = Modifier
-                        .width(66.dp)
-                        .height(34.dp),
+                        .width(62.dp)
+                        .height(30.dp),
                     fontSize = 10.sp,
+                    selected = false,
+                    prominent = false,
                     onClick = onDismiss,
                 )
             }
@@ -2295,15 +2469,35 @@ private fun RhythmSetupPage(
     beatFlash: Boolean,
     isRunning: Boolean,
     beatClockStartedAtMs: Long,
+    tempoNudgeMs: Int,
     playbackStartedAtMs: Long,
     beatVisualsEnabled: Boolean,
     beatRingVisible: Boolean,
     onEditRhythm: () -> Unit,
     onToggleRunning: () -> Unit,
     onBpmClick: () -> Unit,
+    onTempoNudge: (Int) -> Unit,
     onOpenTuner: () -> Unit,
     onOpenSpectrum: () -> Unit,
 ) {
+    var tempoNudgeAckStep by remember { mutableIntStateOf(0) }
+    var tempoNudgeAckSerial by remember { mutableIntStateOf(0) }
+    val acknowledgeTempoNudge = { step: Int ->
+        onTempoNudge(step)
+        tempoNudgeAckStep = step
+        tempoNudgeAckSerial += 1
+    }
+
+    LaunchedEffect(tempoNudgeAckSerial) {
+        if (tempoNudgeAckSerial > 0) {
+            val activeSerial = tempoNudgeAckSerial
+            delay(650L)
+            if (tempoNudgeAckSerial == activeSerial) {
+                tempoNudgeAckStep = 0
+            }
+        }
+    }
+
     val beatVisualState = rememberRhythmBeatVisualState(
         isRunning = isRunning,
         animationEnabled = beatVisualsEnabled,
@@ -2334,13 +2528,35 @@ private fun RhythmSetupPage(
             isRunning = isRunning,
             playbackStartedAtMs = playbackStartedAtMs,
             beatRingVisible = beatRingVisible,
+            tempoNudgeMs = tempoNudgeMs,
             modifier = Modifier.fillMaxSize(),
             onBpmClick = onBpmClick,
             onEdit = onEditRhythm,
             onToggleRunning = onToggleRunning,
+            onTempoNudge = acknowledgeTempoNudge,
             onOpenTuner = onOpenTuner,
             onOpenSpectrum = onOpenSpectrum,
         )
+
+        if (tempoNudgeAckStep != 0) {
+            Text(
+                text = if (tempoNudgeAckStep > 0) {
+                    "+${tempoNudgeAckStep}ms"
+                } else {
+                    "${tempoNudgeAckStep}ms"
+                },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 18.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.86f))
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+                textAlign = TextAlign.Start,
+            )
+        }
     }
 }
 
@@ -2356,11 +2572,13 @@ private fun RhythmLiveCanvas(
     beatFlash: Boolean,
     isRunning: Boolean,
     playbackStartedAtMs: Long,
+    tempoNudgeMs: Int,
     modifier: Modifier = Modifier,
     beatRingVisible: Boolean = true,
     onBpmClick: () -> Unit,
     onEdit: () -> Unit,
     onToggleRunning: () -> Unit,
+    onTempoNudge: (Int) -> Unit,
     onOpenTuner: () -> Unit,
     onOpenSpectrum: () -> Unit,
 ) {
@@ -2370,9 +2588,11 @@ private fun RhythmLiveCanvas(
         currentBeatIndex = currentBeatIndex,
         beatFlash = beatRingVisible && beatFlash,
         modifier = modifier,
-        centerContentWidth = 192.dp,
+        centerContentWidth = 236.dp,
         beatRingVisible = beatRingVisible,
         onBeatAccentTypeCycle = null,
+        tempoNudgeMs = tempoNudgeMs,
+        onTempoNudge = onTempoNudge,
         bottomContent = {
             RhythmElapsedTimer(
                 isRunning = isRunning,
@@ -2381,10 +2601,11 @@ private fun RhythmLiveCanvas(
         },
     ) {
         Box(
-            modifier = Modifier.width(192.dp),
+            modifier = Modifier.width(236.dp),
             contentAlignment = Alignment.Center,
         ) {
             Column(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
@@ -2434,17 +2655,14 @@ private fun RhythmLiveCanvas(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                SubdivisionDots(
+                TempoPushSubdivisionRow(
                     subdivisionCount = subdivisionCount,
                     currentSubdivisionIndex = currentSubdivisionIndex,
-                    activeSize = 18.dp,
-                    inactiveSize = 10.dp,
-                    spacing = 3.dp,
+                    tempoNudgeMs = tempoNudgeMs,
+                    onTempoNudge = onTempoNudge,
                 )
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(2.dp))
 
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -2513,6 +2731,164 @@ private fun RhythmElapsedTimer(
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = if (isRunning) 0.94f else 0.48f),
             textAlign = TextAlign.Center,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun TempoPushSubdivisionRow(
+    subdivisionCount: Int,
+    currentSubdivisionIndex: Int,
+    tempoNudgeMs: Int,
+    onTempoNudge: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .width(236.dp)
+            .height(28.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        TempoPushInlineHint(
+            rotationDegrees = -90f,
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .offset(x = (-0).dp),
+            onVerticalNudge = { isSwipeUp ->
+                onTempoNudge(if (isSwipeUp) tempoNudgeMs else -tempoNudgeMs)
+            },
+        )
+
+        SubdivisionDots(
+            subdivisionCount = subdivisionCount,
+            currentSubdivisionIndex = currentSubdivisionIndex,
+            activeSize = 18.dp,
+            inactiveSize = 10.dp,
+            spacing = 3.dp,
+        )
+
+        TempoPushInlineHint(
+            rotationDegrees = 90f,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .offset(x = 0.dp),
+            onVerticalNudge = { isSwipeUp ->
+                onTempoNudge(if (isSwipeUp) -tempoNudgeMs else tempoNudgeMs)
+            },
+        )
+    }
+}
+
+@Composable
+private fun TempoPushInlineHint(
+    rotationDegrees: Float,
+    modifier: Modifier = Modifier,
+    onVerticalNudge: ((Boolean) -> Unit)? = null,
+) {
+    var verticalDrag by remember { mutableFloatStateOf(0f) }
+
+    Row(
+        modifier = modifier
+            .width(58.dp)
+            .height(12.dp)
+            .then(
+                if (onVerticalNudge != null) {
+                    Modifier.pointerInput(onVerticalNudge) {
+                        detectVerticalDragGestures(
+                            onDragStart = {
+                                verticalDrag = 0f
+                            },
+                            onVerticalDrag = { _, dragAmount ->
+                                verticalDrag += dragAmount
+                            },
+                            onDragEnd = {
+                                when {
+                                    verticalDrag < -12f -> onVerticalNudge(true)
+                                    verticalDrag > 12f -> onVerticalNudge(false)
+                                }
+                                verticalDrag = 0f
+                            },
+                            onDragCancel = {
+                                verticalDrag = 0f
+                            },
+                        )
+                    }
+                } else {
+                    Modifier
+                },
+            )
+            .rotate(rotationDegrees),
+        horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TempoPushArrowIcon(pointLeft = true)
+
+        Text(
+            text = "Pull - Push",
+            fontSize = 6.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
+            maxLines = 1,
+        )
+
+        TempoPushArrowIcon(pointLeft = false)
+    }
+}
+
+@Composable
+private fun TempoPushArrowIcon(
+    pointLeft: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
+
+    Canvas(
+        modifier = modifier.size(width = 5.dp, height = 7.dp),
+    ) {
+        val path = Path().apply {
+            if (pointLeft) {
+                moveTo(0f, size.height / 2f)
+                lineTo(size.width, 0f)
+                lineTo(size.width, size.height)
+            } else {
+                moveTo(size.width, size.height / 2f)
+                lineTo(0f, 0f)
+                lineTo(0f, size.height)
+            }
+            close()
+        }
+        drawPath(path = path, color = color)
+    }
+}
+
+@Suppress("unused")
+@Composable
+private fun TempoPushSideHint(
+    rotationDegrees: Float,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .width(68.dp)
+            .height(12.dp)
+            .rotate(rotationDegrees),
+        horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "↕",
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
+            maxLines = 1,
+        )
+
+        Text(
+            text = "<- Pull - Push ->",
+            fontSize = 6.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
             maxLines = 1,
         )
     }
@@ -2688,33 +3064,16 @@ private fun RhythmEditorPopup(
             )
 
             activeChoicePicker?.let { picker ->
-                RhythmChoicePopup(
-                    title = if (picker == RhythmChoicePicker.TimeSignature) {
-                        appText.timeSignature
-                    } else {
-                        appText.subdivision
+                RhythmTimingChoicePopup(
+                    appText = appText,
+                    initialPicker = picker,
+                    beatsPerMeasure = beatsPerMeasure,
+                    subdivisionCount = subdivisionCount,
+                    onTimeSignatureChoice = { option ->
+                        onTimeSignatureChoice(option)
                     },
-                    options = if (picker == RhythmChoicePicker.TimeSignature) {
-                        TimeSignatureBeatOptions
-                    } else {
-                        SubdivisionOptions
-                    },
-                    selectedOption = if (picker == RhythmChoicePicker.TimeSignature) {
-                        beatsPerMeasure
-                    } else {
-                        subdivisionCount
-                    },
-                    dismissText = appText.done,
-                    optionLabel = { option ->
-                        if (picker == RhythmChoicePicker.TimeSignature) "$option/4" else "$option"
-                    },
-                    onOptionChoice = { option ->
-                        if (picker == RhythmChoicePicker.TimeSignature) {
-                            onTimeSignatureChoice(option)
-                        } else {
-                            onSubdivisionChoice(option)
-                        }
-                        activeChoicePicker = null
+                    onSubdivisionChoice = { option ->
+                        onSubdivisionChoice(option)
                     },
                     onDismiss = {
                         activeChoicePicker = null
@@ -2788,16 +3147,18 @@ private fun RhythmValueStepper(
 }
 
 @Composable
-private fun RhythmChoicePopup(
-    title: String,
-    options: List<Int>,
-    selectedOption: Int,
-    dismissText: String,
-    optionLabel: (Int) -> String,
-    onOptionChoice: (Int) -> Unit,
+private fun RhythmTimingChoicePopup(
+    appText: AppText,
+    initialPicker: RhythmChoicePicker,
+    beatsPerMeasure: Int,
+    subdivisionCount: Int,
+    onTimeSignatureChoice: (Int) -> Unit,
+    onSubdivisionChoice: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var horizontalDrag by remember { mutableFloatStateOf(0f) }
+    val initialPage = if (initialPicker == RhythmChoicePicker.TimeSignature) 0 else 1
+    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { 2 })
+    val scope = rememberCoroutineScope()
 
     BackHandler(onBack = onDismiss)
 
@@ -2805,74 +3166,118 @@ private fun RhythmChoicePopup(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.94f))
-            .pointerInput(onDismiss) {
-                detectHorizontalDragGestures(
-                    onDragStart = {
-                        horizontalDrag = 0f
-                    },
-                    onHorizontalDrag = { _, dragAmount ->
-                        horizontalDrag += dragAmount
-                    },
-                    onDragEnd = {
-                        if (abs(horizontalDrag) > 60f) {
-                            onDismiss()
-                        }
-                        horizontalDrag = 0f
-                    },
-                    onDragCancel = {
-                        horizontalDrag = 0f
-                    },
-                )
-            }
             .clickable(onClick = {}),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             modifier = Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 18.dp),
+                .align(Alignment.Center)
+                .width(184.dp)
+                .padding(top = 0.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(
-                text = title,
-                modifier = Modifier.width(112.dp),
-                fontSize = 12.sp,
-                lineHeight = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                textAlign = TextAlign.Center,
-            )
 
-            Spacer(modifier = Modifier.height(7.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ClockImageChoiceButton(
+                    text = appText.timeSignature,
+                    selected = pagerState.currentPage == 0,
+                    modifier = Modifier
+                        .width(82.dp)
+                        .height(24.dp),
+                    fontSize = 8.sp,
+                    onClick = {
+                        scope.launch { pagerState.animateScrollToPage(0) }
+                    },
+                )
 
-            options.chunked(4).forEach { optionRow ->
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    optionRow.forEach { option ->
-                        SettingButton(
-                            text = optionLabel(option),
-                            selected = selectedOption == option,
-                            modifier = Modifier
-                                .width(40.dp)
-                                .height(28.dp),
-                            onClick = { onOptionChoice(option) },
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
+                ClockImageChoiceButton(
+                    text = appText.subdivision,
+                    selected = pagerState.currentPage == 1,
+                    modifier = Modifier
+                        .width(82.dp)
+                        .height(24.dp),
+                    fontSize = 8.sp,
+                    onClick = {
+                        scope.launch { pagerState.animateScrollToPage(1) }
+                    },
+                )
             }
 
-            SmallCommandButton(
-                text = dismissText,
+            HorizontalPager(
+                state = pagerState,
                 modifier = Modifier
-                    .width(62.dp)
-                    .height(26.dp),
-                fontSize = 10.sp,
-                onClick = onDismiss,
-            )
+                    .width(184.dp)
+                    .height(130.dp),
+            ) { page ->
+                if (page == 0) {
+                    RhythmTimingOptionGrid(
+                        options = TimeSignatureBeatOptions,
+                        selectedOption = beatsPerMeasure,
+                        optionLabel = { option -> "$option/4" },
+                        onOptionChoice = onTimeSignatureChoice,
+                    )
+                } else {
+                    RhythmTimingOptionGrid(
+                        options = SubdivisionOptions,
+                        selectedOption = subdivisionCount,
+                        optionLabel = { option -> "$option" },
+                        onOptionChoice = onSubdivisionChoice,
+                    )
+                }
+            }
+        }
+
+        TunerBottomActionButton(
+            text = "Back",
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .offset(y = (-12).dp),
+            mirrored = true,
+            onClick = onDismiss,
+        )
+
+        TunerBottomActionButton(
+            text = appText.done,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .offset(y = (-12).dp),
+            onClick = onDismiss,
+        )
+    }
+}
+
+@Composable
+private fun RhythmTimingOptionGrid(
+    options: List<Int>,
+    selectedOption: Int,
+    optionLabel: (Int) -> String,
+    onOptionChoice: (Int) -> Unit,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        options.chunked(4).forEach { optionRow ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                optionRow.forEach { option ->
+                    ClockImageChoiceButton(
+                        text = optionLabel(option),
+                        selected = selectedOption == option,
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(26.dp),
+                        fontSize = 9.sp,
+                        onClick = { onOptionChoice(option) },
+                    )
+                }
+            }
         }
     }
 }
@@ -2889,6 +3294,8 @@ private fun BigPulseCircleSelector(
     bottomContentOffsetY: Dp = 0.dp,
     beatRingVisible: Boolean = true,
     onBeatAccentTypeCycle: ((Int) -> Unit)?,
+    tempoNudgeMs: Int = DEFAULT_TEMPO_NUDGE_MS,
+    onTempoNudge: ((Int) -> Unit)? = null,
     bottomContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
@@ -2949,6 +3356,9 @@ private fun BigPulseCircleSelector(
                     onClick = onBeatAccentTypeCycle?.let { onBeatChoice ->
                         { onBeatChoice(index) }
                     },
+                    onVerticalNudge = onTempoNudge?.let { nudge ->
+                        { isSwipeUp -> nudge(if (isSwipeUp) -tempoNudgeMs else tempoNudgeMs) }
+                    },
                 )
             }
 
@@ -2967,6 +3377,9 @@ private fun BigPulseCircleSelector(
                         .size(hitSize),
                     onClick = onBeatAccentTypeCycle?.let { onBeatChoice ->
                         { onBeatChoice(beat) }
+                    },
+                    onVerticalNudge = onTempoNudge?.let { nudge ->
+                        { isSwipeUp -> nudge(if (isSwipeUp) tempoNudgeMs else -tempoNudgeMs) }
                     },
                 )
             }
@@ -3005,6 +3418,7 @@ private fun BeatAccentDotButton(
     beatFlash: Boolean,
     modifier: Modifier,
     onClick: (() -> Unit)?,
+    onVerticalNudge: ((Boolean) -> Unit)? = null,
 ) {
     val baseDotSize = when (accentType) {
         BeatAccentType.Big -> 20.dp
@@ -3022,10 +3436,37 @@ private fun BeatAccentDotButton(
     }
     val borderAlpha = if (beatFlash) 0.95f else 0.58f
     val borderWidth = if (beatFlash) 3.dp else 2.dp
+    var verticalDrag by remember { mutableFloatStateOf(0f) }
 
     Box(
         modifier = modifier
             .clip(CircleShape)
+            .then(
+                if (onVerticalNudge != null) {
+                    Modifier.pointerInput(onVerticalNudge) {
+                        detectVerticalDragGestures(
+                            onDragStart = {
+                                verticalDrag = 0f
+                            },
+                            onVerticalDrag = { _, dragAmount ->
+                                verticalDrag += dragAmount
+                            },
+                            onDragEnd = {
+                                when {
+                                    verticalDrag < -12f -> onVerticalNudge(true)
+                                    verticalDrag > 12f -> onVerticalNudge(false)
+                                }
+                                verticalDrag = 0f
+                            },
+                            onDragCancel = {
+                                verticalDrag = 0f
+                            },
+                        )
+                    }
+                } else {
+                    Modifier
+                },
+            )
             .then(
                 if (onClick != null) {
                     Modifier.clickable(onClick = onClick)
@@ -3286,12 +3727,24 @@ private fun rhythmVisualDelayMs(
 private fun FastTapTempoButton(
     text: String,
     onTap: () -> Unit,
+    prominent: Boolean = false,
 ) {
+    val shape = CircleShape
+    val modifier = if (prominent) {
+        Modifier.size(88.dp)
+    } else {
+        Modifier.size(98.dp)
+    }
+
     Box(
-        modifier = Modifier
-            .size(82.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.primary)
+        modifier = modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = if (prominent) 0.78f else 1f), shape)
+            .border(
+                width = if (prominent) 1.dp else 0.dp,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = if (prominent) 0.95f else 0f),
+                shape = shape,
+            )
             .pointerInput(onTap) {
                 detectTapGestures(
                     onPress = {
@@ -3304,7 +3757,7 @@ private fun FastTapTempoButton(
     ) {
         Text(
             text = text,
-            fontSize = 20.sp,
+            fontSize = if (prominent) 15.sp else 20.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onPrimary,
             textAlign = TextAlign.Center,
@@ -3318,7 +3771,41 @@ private fun TempoAdjustButton(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onLongClickLabel: String,
+    prominent: Boolean = false,
 ) {
+    if (prominent) {
+        val shape = RoundedCornerShape(50)
+        Box(
+            modifier = Modifier
+                .width(42.dp)
+                .height(30.dp)
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.78f), shape)
+                .border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.95f),
+                    shape = shape,
+                )
+                .pointerInput(onClick, onLongClick) {
+                    detectTapGestures(
+                        onTap = { onClick() },
+                        onLongPress = { onLongClick() },
+                    )
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+        }
+        return
+    }
+
     Button(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -3372,14 +3859,22 @@ private fun PlaylistClockPage(
             )
 
             Text(
-                text = "${songIndex + 1}/${playlist.songs.size} ${song.name}",
-                modifier = Modifier.width(132.dp),
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(fontSize = 9.sp)) {
+                        append("${songIndex + 1} of ${playlist.songs.size}")
+                    }
+                    append(" - ")
+                    append(song.name)
+                },
+                modifier = Modifier
+                    .width(132.dp)
+                    .padding(start = 14.dp),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
+                textAlign = TextAlign.Start,
             )
         }
 
@@ -4561,6 +5056,7 @@ private fun SettingsPage(
     beatSoundMode: BeatSoundMode,
     keyDroneEnabled: Boolean,
     keyDroneVolumePercent: Int,
+    tempoNudgeMs: Int,
     accentIntensityMode: AccentIntensityMode,
     accentIntensityRanges: List<AccentIntensityRange>,
     a4ReferenceHz: Int,
@@ -4575,9 +5071,10 @@ private fun SettingsPage(
     appCpuUsagePercent: Float?,
     onHapticsToggle: () -> Unit,
     onBeepToggle: () -> Unit,
-    onBeatSoundModeToggle: () -> Unit,
+    onBeatSoundModeChoice: (BeatSoundMode) -> Unit,
     onKeyDroneToggle: () -> Unit,
     onKeyDroneVolumeChange: (Int) -> Unit,
+    onTempoNudgeChange: (Int) -> Unit,
     onAccentIntensityModeChoice: (AccentIntensityMode) -> Unit,
     onAccentIntensityRangesChange: (List<AccentIntensityRange>) -> Unit,
     onA4ReferenceHzChange: (Int) -> Unit,
@@ -4641,7 +5138,16 @@ private fun SettingsPage(
                     modifier = Modifier
                         .width(42.dp)
                         .height(26.dp),
-                    onClick = onBeatSoundModeToggle,
+                    onClick = { onBeatSoundModeChoice(BeatSoundMode.Wood) },
+                )
+
+                ClockImageChoiceButton(
+                    text = appText.bell,
+                    selected = beatSoundMode == BeatSoundMode.Bell,
+                    modifier = Modifier
+                        .width(42.dp)
+                        .height(26.dp),
+                    onClick = { onBeatSoundModeChoice(BeatSoundMode.Bell) },
                 )
             }
 
@@ -4693,6 +5199,14 @@ private fun SettingsPage(
                 label = appText.a4Reference,
                 referenceHz = a4ReferenceHz,
                 onReferenceHzChange = onA4ReferenceHzChange,
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            MillisecondStepperControl(
+                label = appText.visualNudge,
+                valueMs = tempoNudgeMs,
+                onValueChange = onTempoNudgeChange,
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -5062,17 +5576,88 @@ private fun PercentStepperControl(
 }
 
 @Composable
+private fun MillisecondStepperControl(
+    label: String,
+    valueMs: Int,
+    onValueChange: (Int) -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+        )
+
+        Spacer(modifier = Modifier.height(3.dp))
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SmallCommandButton(
+                text = "-",
+                modifier = Modifier
+                    .width(24.dp)
+                    .height(22.dp),
+                fontSize = 11.sp,
+                onClick = {
+                    if (valueMs > MIN_TEMPO_NUDGE_MS) {
+                        onValueChange(-TEMPO_NUDGE_STEP_MS)
+                    }
+                },
+            )
+
+            Text(
+                text = "${valueMs}ms",
+                modifier = Modifier.width(62.dp),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+
+            SmallCommandButton(
+                text = "+",
+                modifier = Modifier
+                    .width(24.dp)
+                    .height(22.dp),
+                fontSize = 11.sp,
+                onClick = {
+                    if (valueMs < MAX_TEMPO_NUDGE_MS) {
+                        onValueChange(TEMPO_NUDGE_STEP_MS)
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
 private fun AccentIntensityPicker(
     accentIntensityRanges: List<AccentIntensityRange>,
     appLanguage: AppLanguage,
     onClick: () -> Unit,
 ) {
-    Button(
-        onClick = onClick,
+    val shape = RoundedCornerShape(50)
+
+    Box(
         modifier = Modifier
             .width(166.dp)
-            .height(42.dp),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            .height(36.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.84f), shape)
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.95f),
+                shape = shape,
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -5343,7 +5928,7 @@ private fun AudioToolButtons(
             modifier = Modifier
                 .width(50.dp)
                 .height(22.dp),
-            fontSize = 9.sp,
+            fontSize = 10.sp,
             selected = false,
             prominent = false,
             onClick = onOpenTuner,
@@ -5354,7 +5939,7 @@ private fun AudioToolButtons(
             modifier = Modifier
                 .width(50.dp)
                 .height(22.dp),
-            fontSize = 8.sp,
+            fontSize = 10.sp,
             selected = false,
             prominent = false,
             onClick = onOpenSpectrum,
@@ -7737,6 +8322,7 @@ private fun MetronomeState.hasSameNonVisualStateAs(other: MetronomeState): Boole
         keyDroneEnabled == other.keyDroneEnabled &&
         keyDroneVolumePercent == other.keyDroneVolumePercent &&
         musicalKey == other.musicalKey &&
+        tempoNudgeMs == other.tempoNudgeMs &&
         playlistIndex == other.playlistIndex &&
         songIndex == other.songIndex &&
         isRunning == other.isRunning &&
@@ -7786,6 +8372,7 @@ fun SettingsPreview() {
                 beatSoundMode = BeatSoundMode.Clicks,
                 keyDroneEnabled = false,
                 keyDroneVolumePercent = 18,
+                tempoNudgeMs = DEFAULT_TEMPO_NUDGE_MS,
                 accentIntensityMode = AccentIntensityMode.Big,
                 accentIntensityRanges = defaultAccentIntensityRanges(),
                 a4ReferenceHz = DEFAULT_A4_REFERENCE_HZ,
@@ -7800,9 +8387,10 @@ fun SettingsPreview() {
                 appCpuUsagePercent = 2.4f,
                 onHapticsToggle = {},
                 onBeepToggle = {},
-                onBeatSoundModeToggle = {},
+                onBeatSoundModeChoice = {},
                 onKeyDroneToggle = {},
                 onKeyDroneVolumeChange = {},
+                onTempoNudgeChange = {},
                 onAccentIntensityModeChoice = {},
                 onAccentIntensityRangesChange = {},
                 onA4ReferenceHzChange = {},
