@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.bpmmunkzface"
+    namespace = "bpm.munkz.pulse_wear.os.watchface"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -11,7 +11,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.bpmmunkzface"
+        applicationId = "bpm.munkz.pulse_wear.os.watchface"
         minSdk = 33
         targetSdk = 36
         versionCode = 2

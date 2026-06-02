@@ -1,4 +1,4 @@
-package com.example.bpmmunkzpulse.presentation
+package bpm.munkz.pulse_wear.os.metronome.presentation
 
 import android.app.PendingIntent
 import android.content.ComponentName
@@ -11,6 +11,7 @@ import androidx.wear.watchface.complications.data.ShortTextComplicationData
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import androidx.wear.watchface.complications.datasource.SuspendingComplicationDataSourceService
+import androidx.core.content.edit
 
 private const val LATEST_MUSIC_PREFS = "bpm_munkz_latest_music"
 private const val LATEST_BPM_KEY = "latest_bpm"
@@ -18,28 +19,12 @@ private const val LATEST_KEY_KEY = "latest_key"
 private const val DEFAULT_LATEST_BPM = 0
 private const val DEFAULT_LATEST_KEY = "--"
 
-fun Context.saveLatestMusicBpm(bpm: Int) {
-    getSharedPreferences(LATEST_MUSIC_PREFS, Context.MODE_PRIVATE)
-        .edit()
-        .putInt(LATEST_BPM_KEY, bpm.coerceIn(MIN_BPM, MAX_BPM))
-        .commit()
-    requestLatestMusicComplicationUpdates()
-}
-
-fun Context.saveLatestMusicKey(musicalKey: String) {
-    getSharedPreferences(LATEST_MUSIC_PREFS, Context.MODE_PRIVATE)
-        .edit()
-        .putString(LATEST_KEY_KEY, musicalKey.trim().ifBlank { DEFAULT_LATEST_KEY })
-        .commit()
-    requestLatestMusicComplicationUpdates()
-}
-
 fun Context.saveLatestMusicReading(bpm: Int, musicalKey: String) {
     getSharedPreferences(LATEST_MUSIC_PREFS, Context.MODE_PRIVATE)
-        .edit()
-        .putInt(LATEST_BPM_KEY, bpm.coerceIn(MIN_BPM, MAX_BPM))
-        .putString(LATEST_KEY_KEY, musicalKey.trim().ifBlank { DEFAULT_LATEST_KEY })
-        .commit()
+        .edit {
+            putInt(LATEST_BPM_KEY, bpm.coerceIn(MIN_BPM, MAX_BPM))
+            putString(LATEST_KEY_KEY, musicalKey.trim().ifBlank { DEFAULT_LATEST_KEY })
+        }
     requestLatestMusicComplicationUpdates()
 }
 
@@ -86,7 +71,6 @@ abstract class LatestMusicComplicationDataSourceService(
         val intent = Intent(this, MainActivity::class.java)
             .setAction(ACTION_OPEN_SPECTRUM)
             .putExtra(EXTRA_OPEN_SPECTRUM, true)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         return PendingIntent.getActivity(
             this,
             title.hashCode(),
@@ -101,7 +85,11 @@ class LatestBpmComplicationDataSourceService : LatestMusicComplicationDataSource
     textProvider = {
         val bpm = getSharedPreferences(LATEST_MUSIC_PREFS, Context.MODE_PRIVATE)
             .getInt(LATEST_BPM_KEY, DEFAULT_LATEST_BPM)
-        if (bpm > 0) bpm.toString() else DEFAULT_LATEST_KEY
+        if (bpm > 0) {
+            bpm.toString()
+        } else {
+            DEFAULT_LATEST_KEY
+        }
     },
 ) {
     override val previewText: String = "120"
@@ -113,7 +101,8 @@ class LatestKeyComplicationDataSourceService : LatestMusicComplicationDataSource
         getSharedPreferences(LATEST_MUSIC_PREFS, Context.MODE_PRIVATE)
             .getString(LATEST_KEY_KEY, DEFAULT_LATEST_KEY)
             ?.substringBefore(' ')
-            ?: DEFAULT_LATEST_KEY
+            .orEmpty()
+            .ifBlank { DEFAULT_LATEST_KEY }
     },
 ) {
     override val previewText: String = "C"

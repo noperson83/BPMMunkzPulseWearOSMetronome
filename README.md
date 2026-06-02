@@ -112,7 +112,7 @@ Each saved song can include:
 
 The `:watchface` module is a separate Watch Face Format package. It is intended to work alongside the app, not replace it.
 
-- Package id: `com.example.bpmmunkzface`.
+- Package id: `bpm.munkz.pulse_wear.os.watchface`.
 - Format version is declared in `watchface/src/main/AndroidManifest.xml`.
 - Dial styles: all colors, blue, green, orange, purple, and white.
 - Hand color configuration: green, white, blue, orange, and purple.
@@ -131,8 +131,8 @@ LatestKeyComplicationDataSourceService
 
 - App module: `:app`.
 - Watch-face module: `:watchface`.
-- App package id: `com.example.bpmmunkzpulse`.
-- Watch-face package id: `com.example.bpmmunkzface`.
+- App package id: `bpm.munkz.pulse_wear.os.metronome`.
+- Watch-face package id: `bpm.munkz.pulse_wear.os.watchface`.
 - BPM range: 30 to 240.
 - Audio sample rate: 44,100 Hz.
 - Audio frame size: 2,048 samples.
@@ -204,7 +204,7 @@ Run checks/builds before publishing changes:
 The app package id is:
 
 ```text
-com.example.bpmmunkzpulse
+bpm.munkz.pulse_wear.os.metronome
 ```
 
 The app declares permissions for foreground service playback, notifications, microphone input, wake lock, and vibration. Microphone permission is used for tuner and spectrum analysis.
@@ -214,7 +214,7 @@ The app declares permissions for foreground service playback, notifications, mic
 The watch-face package id is:
 
 ```text
-com.example.bpmmunkzface
+bpm.munkz.pulse_wear.os.watchface
 ```
 
 The app queries this package so it can help the user open/select the BPM Munkz Pulse watch face when installed.
@@ -222,8 +222,8 @@ The app queries this package so it can help the user open/select the BPM Munkz P
 The watch face can show latest BPM and latest key from the app via complication providers:
 
 ```text
-com.example.bpmmunkzpulse.presentation.LatestBpmComplicationDataSourceService
-com.example.bpmmunkzpulse.presentation.LatestKeyComplicationDataSourceService
+bpm.munkz.pulse_wear.os.metronome.presentation.LatestBpmComplicationDataSourceService
+bpm.munkz.pulse_wear.os.metronome.presentation.LatestKeyComplicationDataSourceService
 ```
 
 If a fresh install still shows `--` or `...`, long-press the watch face and confirm that the two complication slots are assigned to `Latest BPM` and `Latest Key`. Some Wear OS/Samsung face instances keep old complication assignments after reinstalling a debug APK.

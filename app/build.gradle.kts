@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.bpmmunkzpulse"
+    namespace = "bpm.munkz.pulse_wear.os.metronome"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -12,7 +12,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.bpmmunkzpulse"
+        applicationId = "bpm.munkz.pulse_wear.os.metronome"
         minSdk = 33
         targetSdk = 36
         versionCode = 1

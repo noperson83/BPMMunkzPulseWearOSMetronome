@@ -1,4 +1,4 @@
-package com.example.bpmmunkzpulse.presentation
+package bpm.munkz.pulse_wear.os.metronome.presentation
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -28,7 +28,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.core.content.edit
-import com.example.bpmmunkzpulse.R
+import bpm.munkz.pulse_wear.os.metronome.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -43,6 +43,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 import kotlin.math.PI
+import kotlin.math.pow
 import kotlin.math.sin
 
 enum class BeatAccentType(val persistedValue: Int) {
@@ -92,8 +93,6 @@ enum class AccentIntensityMode(val persistedValue: Int) {
         accentType: BeatAccentType,
         ranges: List<AccentIntensityRange>,
     ): Int {
-        if (accentType == BeatAccentType.Silent) return 0
-
         return when (accentType) {
             BeatAccentType.Big -> ranges.rangeFor(Big).valuePercent
             BeatAccentType.Medium -> ranges.rangeFor(Medium).valuePercent
@@ -123,10 +122,7 @@ data class AccentIntensityRange(
     val maxPercent: Int,
     val minPercent: Int,
     val valuePercent: Int,
-) {
-    val midPercent: Int
-        get() = ((maxPercent + minPercent) / 2).coerceIn(0, 100)
-}
+)
 
 data class MetronomeState(
     val bpm: Int = 64,
@@ -153,6 +149,28 @@ data class MetronomeState(
     val beatClockStartedAtMs: Long = SystemClock.elapsedRealtime(),
     val playbackStartedAtMs: Long = 0L,
 )
+
+private const val EXTRA_BPM = "bpm"
+private const val EXTRA_BEATS_PER_MEASURE = "beats_per_measure"
+private const val EXTRA_ACCENT_BEAT = "accent_beat"
+private const val EXTRA_SUBDIVISION_COUNT = "subdivision_count"
+private const val EXTRA_BEAT_ACCENT_TYPES = "beat_accent_types"
+private const val EXTRA_ACCENT_INTENSITY_MODE = "accent_intensity_mode"
+private const val EXTRA_ACCENT_INTENSITY_MAXES = "accent_intensity_maxes"
+private const val EXTRA_ACCENT_INTENSITY_MINS = "accent_intensity_mins"
+private const val EXTRA_ACCENT_INTENSITY_VALUES = "accent_intensity_values"
+private const val EXTRA_HAPTICS_ENABLED = "haptics_enabled"
+private const val EXTRA_BEEP_ENABLED = "beep_enabled"
+private const val EXTRA_BEAT_SOUND_MODE = "beat_sound_mode"
+private const val EXTRA_KEY_DRONE_ENABLED = "key_drone_enabled"
+private const val EXTRA_KEY_DRONE_VOLUME_PERCENT = "key_drone_volume_percent"
+private const val EXTRA_MUSICAL_KEY = "musical_key"
+private const val EXTRA_TEMPO_NUDGE_MS = "tempo_nudge_ms"
+private const val EXTRA_CURRENT_BEAT_INDEX = "current_beat_index"
+private const val EXTRA_CURRENT_SUBDIVISION_INDEX = "current_subdivision_index"
+private const val EXTRA_PLAYLIST_INDEX = "playlist_index"
+private const val EXTRA_SONG_INDEX = "song_index"
+private const val EXTRA_PLAYBACK_STARTED_AT_MS = "playback_started_at_ms"
 
 class MetronomeService : Service() {
     private val binder = LocalBinder()
@@ -291,19 +309,6 @@ class MetronomeService : Service() {
                 accentBeat = beatAccentTypes.primaryAccentBeat(),
                 beatAccentTypes = beatAccentTypes,
                 currentBeatIndex = it.currentBeatIndex.coerceIn(1, safeBeatsPerMeasure),
-            )
-        }
-    }
-
-    fun setAccentBeat(accentBeat: Int) {
-        updateConfig(restartBeat = false) {
-            val safeAccentBeat = accentBeat.coerceIn(1, it.beatsPerMeasure)
-            val beatAccentTypes = List(it.beatsPerMeasure) { index ->
-                if (index + 1 == safeAccentBeat) BeatAccentType.Big else BeatAccentType.Silent
-            }
-            it.copy(
-                accentBeat = safeAccentBeat,
-                beatAccentTypes = beatAccentTypes,
             )
         }
     }
@@ -687,34 +692,20 @@ class MetronomeService : Service() {
     }
 
     private fun Context.beatPulseWakeLock(): PowerManager.WakeLock {
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         return powerManager
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:BeatPulse")
             .apply { setReferenceCounted(false) }
     }
 
     private fun Context.beatPulseVibrator(): Vibrator {
-        val manager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+        val manager = getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager
         return manager.defaultVibrator
     }
 
     companion object {
-        private const val ACTION_START = "com.example.bpmmunkzpulse.presentation.action.START_METRONOME"
-        private const val ACTION_STOP = "com.example.bpmmunkzpulse.presentation.action.STOP_METRONOME"
-        private const val EXTRA_BPM = "bpm"
-        private const val EXTRA_BEATS_PER_MEASURE = "beats_per_measure"
-        private const val EXTRA_ACCENT_BEAT = "accent_beat"
-        private const val EXTRA_SUBDIVISION_COUNT = "subdivision_count"
-        private const val EXTRA_ACCENT_INTENSITY_MODE = "accent_intensity_mode"
-        private const val EXTRA_ACCENT_INTENSITY_MAXES = "accent_intensity_maxes"
-        private const val EXTRA_ACCENT_INTENSITY_MINS = "accent_intensity_mins"
-        private const val EXTRA_ACCENT_INTENSITY_VALUES = "accent_intensity_values"
-        private const val EXTRA_HAPTICS_ENABLED = "haptics_enabled"
-        private const val EXTRA_BEEP_ENABLED = "beep_enabled"
-        private const val EXTRA_CURRENT_BEAT_INDEX = "current_beat_index"
-        private const val EXTRA_CURRENT_SUBDIVISION_INDEX = "current_subdivision_index"
-        private const val EXTRA_PLAYLIST_INDEX = "playlist_index"
-        private const val EXTRA_SONG_INDEX = "song_index"
+        private const val ACTION_START = "bpm.munkz.pulse_wear.os.metronome.presentation.action.START_METRONOME"
+        private const val ACTION_STOP = "bpm.munkz.pulse_wear.os.metronome.presentation.action.STOP_METRONOME"
         private const val MIN_BEATS_PER_MEASURE = 2
         private const val MAX_BEATS_PER_MEASURE = 16
         private const val METRONOME_CHANNEL_ID = "metronome_playback"
@@ -772,71 +763,71 @@ private fun Int.toSupportedSubdivisionCount(): Int {
 }
 
 private fun Intent.putMetronomeState(state: MetronomeState): Intent {
-    return putExtra("bpm", state.bpm)
-        .putExtra("beats_per_measure", state.beatsPerMeasure)
-        .putExtra("accent_beat", state.accentBeat)
-        .putExtra("subdivision_count", state.subdivisionCount)
-        .putExtra("beat_accent_types", state.beatAccentTypes.toPersistedIntArray())
-        .putExtra("accent_intensity_mode", state.accentIntensityMode.persistedValue)
-        .putExtra("accent_intensity_maxes", state.accentIntensityRanges.toMaxPercentIntArray())
-        .putExtra("accent_intensity_mins", state.accentIntensityRanges.toMinPercentIntArray())
-        .putExtra("accent_intensity_values", state.accentIntensityRanges.toValuePercentIntArray())
-        .putExtra("haptics_enabled", state.hapticsEnabled)
-        .putExtra("beep_enabled", state.beepEnabled)
-        .putExtra("beat_sound_mode", state.beatSoundMode.persistedValue)
-        .putExtra("key_drone_enabled", state.keyDroneEnabled)
-        .putExtra("key_drone_volume_percent", state.keyDroneVolumePercent)
-        .putExtra("musical_key", state.musicalKey)
-        .putExtra("tempo_nudge_ms", state.tempoNudgeMs)
-        .putExtra("current_beat_index", state.currentBeatIndex)
-        .putExtra("current_subdivision_index", state.currentSubdivisionIndex)
-        .putExtra("playlist_index", state.playlistIndex)
-        .putExtra("song_index", state.songIndex)
-        .putExtra("playback_started_at_ms", state.playbackStartedAtMs)
+    return putExtra(EXTRA_BPM, state.bpm)
+        .putExtra(EXTRA_BEATS_PER_MEASURE, state.beatsPerMeasure)
+        .putExtra(EXTRA_ACCENT_BEAT, state.accentBeat)
+        .putExtra(EXTRA_SUBDIVISION_COUNT, state.subdivisionCount)
+        .putExtra(EXTRA_BEAT_ACCENT_TYPES, state.beatAccentTypes.toPersistedIntArray())
+        .putExtra(EXTRA_ACCENT_INTENSITY_MODE, state.accentIntensityMode.persistedValue)
+        .putExtra(EXTRA_ACCENT_INTENSITY_MAXES, state.accentIntensityRanges.toMaxPercentIntArray())
+        .putExtra(EXTRA_ACCENT_INTENSITY_MINS, state.accentIntensityRanges.toMinPercentIntArray())
+        .putExtra(EXTRA_ACCENT_INTENSITY_VALUES, state.accentIntensityRanges.toValuePercentIntArray())
+        .putExtra(EXTRA_HAPTICS_ENABLED, state.hapticsEnabled)
+        .putExtra(EXTRA_BEEP_ENABLED, state.beepEnabled)
+        .putExtra(EXTRA_BEAT_SOUND_MODE, state.beatSoundMode.persistedValue)
+        .putExtra(EXTRA_KEY_DRONE_ENABLED, state.keyDroneEnabled)
+        .putExtra(EXTRA_KEY_DRONE_VOLUME_PERCENT, state.keyDroneVolumePercent)
+        .putExtra(EXTRA_MUSICAL_KEY, state.musicalKey)
+        .putExtra(EXTRA_TEMPO_NUDGE_MS, state.tempoNudgeMs)
+        .putExtra(EXTRA_CURRENT_BEAT_INDEX, state.currentBeatIndex)
+        .putExtra(EXTRA_CURRENT_SUBDIVISION_INDEX, state.currentSubdivisionIndex)
+        .putExtra(EXTRA_PLAYLIST_INDEX, state.playlistIndex)
+        .putExtra(EXTRA_SONG_INDEX, state.songIndex)
+        .putExtra(EXTRA_PLAYBACK_STARTED_AT_MS, state.playbackStartedAtMs)
 }
 
 private fun Intent.readMetronomeState(fallback: MetronomeState): MetronomeState {
     return fallback.copy(
-        bpm = getIntExtra("bpm", fallback.bpm),
-        beatsPerMeasure = getIntExtra("beats_per_measure", fallback.beatsPerMeasure),
-        accentBeat = getIntExtra("accent_beat", fallback.accentBeat),
-        subdivisionCount = getIntExtra("subdivision_count", fallback.subdivisionCount),
-        beatAccentTypes = getIntArrayExtra("beat_accent_types")
+        bpm = getIntExtra(EXTRA_BPM, fallback.bpm),
+        beatsPerMeasure = getIntExtra(EXTRA_BEATS_PER_MEASURE, fallback.beatsPerMeasure),
+        accentBeat = getIntExtra(EXTRA_ACCENT_BEAT, fallback.accentBeat),
+        subdivisionCount = getIntExtra(EXTRA_SUBDIVISION_COUNT, fallback.subdivisionCount),
+        beatAccentTypes = getIntArrayExtra(EXTRA_BEAT_ACCENT_TYPES)
             ?.map { BeatAccentType.fromPersistedValue(it) }
             ?: fallback.beatAccentTypes,
         accentIntensityMode = AccentIntensityMode.fromPersistedValue(
-            getIntExtra("accent_intensity_mode", fallback.accentIntensityMode.persistedValue),
+            getIntExtra(EXTRA_ACCENT_INTENSITY_MODE, fallback.accentIntensityMode.persistedValue),
         ),
         accentIntensityRanges = readAccentIntensityRanges(fallback.accentIntensityRanges),
-        hapticsEnabled = getBooleanExtra("haptics_enabled", fallback.hapticsEnabled),
-        beepEnabled = getBooleanExtra("beep_enabled", fallback.beepEnabled),
+        hapticsEnabled = getBooleanExtra(EXTRA_HAPTICS_ENABLED, fallback.hapticsEnabled),
+        beepEnabled = getBooleanExtra(EXTRA_BEEP_ENABLED, fallback.beepEnabled),
         beatSoundMode = BeatSoundMode.fromPersistedValue(
-            getIntExtra("beat_sound_mode", fallback.beatSoundMode.persistedValue),
+            getIntExtra(EXTRA_BEAT_SOUND_MODE, fallback.beatSoundMode.persistedValue),
         ),
-        keyDroneEnabled = getBooleanExtra("key_drone_enabled", fallback.keyDroneEnabled),
+        keyDroneEnabled = getBooleanExtra(EXTRA_KEY_DRONE_ENABLED, fallback.keyDroneEnabled),
         keyDroneVolumePercent = getIntExtra(
-            "key_drone_volume_percent",
+            EXTRA_KEY_DRONE_VOLUME_PERCENT,
             fallback.keyDroneVolumePercent,
         ),
-        musicalKey = getStringExtra("musical_key") ?: fallback.musicalKey,
-        tempoNudgeMs = getIntExtra("tempo_nudge_ms", fallback.tempoNudgeMs),
-        currentBeatIndex = getIntExtra("current_beat_index", fallback.currentBeatIndex),
+        musicalKey = getStringExtra(EXTRA_MUSICAL_KEY) ?: fallback.musicalKey,
+        tempoNudgeMs = getIntExtra(EXTRA_TEMPO_NUDGE_MS, fallback.tempoNudgeMs),
+        currentBeatIndex = getIntExtra(EXTRA_CURRENT_BEAT_INDEX, fallback.currentBeatIndex),
         currentSubdivisionIndex = getIntExtra(
-            "current_subdivision_index",
+            EXTRA_CURRENT_SUBDIVISION_INDEX,
             fallback.currentSubdivisionIndex,
         ),
-        playlistIndex = getIntExtra("playlist_index", fallback.playlistIndex),
-        songIndex = getIntExtra("song_index", fallback.songIndex),
-        playbackStartedAtMs = getLongExtra("playback_started_at_ms", fallback.playbackStartedAtMs),
+        playlistIndex = getIntExtra(EXTRA_PLAYLIST_INDEX, fallback.playlistIndex),
+        songIndex = getIntExtra(EXTRA_SONG_INDEX, fallback.songIndex),
+        playbackStartedAtMs = getLongExtra(EXTRA_PLAYBACK_STARTED_AT_MS, fallback.playbackStartedAtMs),
     )
 }
 
 private fun Intent.readAccentIntensityRanges(
     fallback: List<AccentIntensityRange>,
 ): List<AccentIntensityRange> {
-    val maxes = getIntArrayExtra("accent_intensity_maxes")
-    val mins = getIntArrayExtra("accent_intensity_mins")
-    val values = getIntArrayExtra("accent_intensity_values")
+    val maxes = getIntArrayExtra(EXTRA_ACCENT_INTENSITY_MAXES)
+    val mins = getIntArrayExtra(EXTRA_ACCENT_INTENSITY_MINS)
+    val values = getIntArrayExtra(EXTRA_ACCENT_INTENSITY_VALUES)
     if (maxes == null || mins == null) return fallback
 
     return AccentIntensityMode.entries.mapIndexed { index, mode ->
@@ -1183,9 +1174,8 @@ private class KeyDronePlayer {
 
         stop()
         val sampleRate = 22_050
-        val samples = sampleRate
-        val data = ByteArray(samples * 2)
-        for (index in 0 until samples) {
+        val data = ByteArray(sampleRate * 2)
+        for (index in 0 until sampleRate) {
             val phase = index.toDouble() / sampleRate.toDouble()
             val root = sin(2.0 * PI * rootFrequency * phase)
             val fifth = sin(2.0 * PI * rootFrequency * 1.5 * phase)
@@ -1214,7 +1204,7 @@ private class KeyDronePlayer {
             .build()
 
         track.write(data, 0, data.size)
-        track.setLoopPoints(0, samples, -1)
+        track.setLoopPoints(0, sampleRate, -1)
         track.play()
         audioTrack = track
         activeKey = musicalKey
@@ -1238,7 +1228,7 @@ private class KeyDronePlayer {
 
 private fun String.rootFrequencyHz(): Double? {
     val cleaned = trim().replace("\u266f", "#").replace("\u266d", "b")
-    val root = Regex("^[A-Ga-g](#|b)?").find(cleaned)?.value ?: return null
+    val root = Regex("^[A-Ga-g][#b]?").find(cleaned)?.value ?: return null
     val semitone = when (root.replaceFirstChar { it.uppercase() }) {
         "C" -> 0
         "C#", "Db" -> 1
@@ -1255,7 +1245,7 @@ private fun String.rootFrequencyHz(): Double? {
         else -> return null
     }
     val midiNote = 48 + semitone
-    return 440.0 * Math.pow(2.0, (midiNote - 69) / 12.0)
+    return 440.0 * 2.0.pow((midiNote - 69) / 12.0)
 }
 
 internal fun defaultBeatAccentTypes(
@@ -1408,3 +1398,4 @@ private fun String?.toAccentIntensityRanges(): List<AccentIntensityRange> {
 
     return ranges.normalizedAccentIntensityRanges()
 }
+

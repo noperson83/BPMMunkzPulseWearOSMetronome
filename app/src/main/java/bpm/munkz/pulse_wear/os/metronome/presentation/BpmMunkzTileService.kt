@@ -1,4 +1,4 @@
-package com.example.bpmmunkzpulse.presentation
+package bpm.munkz.pulse_wear.os.metronome.presentation
 
 import android.content.ComponentName
 import androidx.wear.protolayout.ActionBuilders.launchAction
@@ -23,19 +23,17 @@ import androidx.wear.protolayout.ModifiersBuilders.Corner
 import androidx.wear.protolayout.ModifiersBuilders.Modifiers
 import androidx.wear.protolayout.ResourceBuilders.AndroidImageResourceByResId
 import androidx.wear.protolayout.ResourceBuilders.ImageResource
-import androidx.wear.protolayout.ResourceBuilders.Resources
 import androidx.wear.protolayout.TimelineBuilders.Timeline
 import androidx.wear.protolayout.expression.ProtoLayoutExperimental
 import androidx.wear.protolayout.modifiers.clickable
 import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders.Tile
 import androidx.wear.tiles.TileService
-import com.example.bpmmunkzpulse.R
+import bpm.munkz.pulse_wear.os.metronome.R
 import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 
-private const val TILE_RESOURCES_VERSION = "5"
 private const val TILE_LOGO_RESOURCE_ID = "bpm_munkz_tile_logo"
 
 @ProtoLayoutExperimental
@@ -53,7 +51,6 @@ class BpmMunkzTileService : TileService() {
 
         return immediateFuture(
             Tile.Builder()
-                .setResourcesVersion(TILE_RESOURCES_VERSION)
                 .setTileTimeline(
                     Timeline.fromLayoutElement(
                         Box.Builder()
@@ -77,8 +74,8 @@ class BpmMunkzTileService : TileService() {
                                     .setHeight(wrap())
                                     .setHorizontalAlignment(HORIZONTAL_ALIGN_CENTER)
                                     .addContent(
-                                        Image.Builder()
-                                            .setResourceId(TILE_LOGO_RESOURCE_ID)
+                                        Image.Builder(requestParams.scope)
+                                            .setImageResource(tileLogoResource(), TILE_LOGO_RESOURCE_ID)
                                             .setWidth(dp(158f))
                                             .setHeight(dp(158f))
                                             .setContentScaleMode(CONTENT_SCALE_MODE_FIT)
@@ -134,16 +131,6 @@ class BpmMunkzTileService : TileService() {
                 .build(),
         )
     }
-
-    override fun onTileResourcesRequest(
-        requestParams: RequestBuilders.ResourcesRequest,
-    ): ListenableFuture<Resources> =
-        immediateFuture(
-            Resources.Builder()
-                .setVersion(TILE_RESOURCES_VERSION)
-                .addIdToImageMapping(TILE_LOGO_RESOURCE_ID, tileLogoResource())
-                .build(),
-        )
 }
 
 private fun tileLogoResource(): ImageResource =
