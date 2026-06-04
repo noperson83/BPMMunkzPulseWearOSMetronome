@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation.theme
+package bpm.munkz.pulse_wear.os.bpm.presentation.theme
 
 import androidx.compose.runtime.Composable
 import androidx.wear.compose.material3.MaterialTheme

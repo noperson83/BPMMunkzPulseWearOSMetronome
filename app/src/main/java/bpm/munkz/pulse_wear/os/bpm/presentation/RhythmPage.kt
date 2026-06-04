@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation
+package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
@@ -1876,13 +1876,14 @@ private fun BigPulseRing(
 internal fun PulsePagerIndicator(
     currentPage: Int,
     modifier: Modifier = Modifier,
+    pageCount: Int = PULSE_PAGE_COUNT,
 ) {
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        repeat(PULSE_PAGE_COUNT) { page ->
+        repeat(pageCount) { page ->
             Box(
                 modifier = Modifier
                     .size(if (page == currentPage) 5.dp else 3.dp)

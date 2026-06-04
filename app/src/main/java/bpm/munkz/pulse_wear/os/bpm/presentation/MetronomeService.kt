@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation
+package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -28,7 +28,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.core.content.edit
-import bpm.munkz.pulse_wear.os.metronome.R
+import bpm.munkz.pulse_wear.os.bpm.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -704,8 +704,8 @@ class MetronomeService : Service() {
     }
 
     companion object {
-        private const val ACTION_START = "bpm.munkz.pulse_wear.os.metronome.presentation.action.START_METRONOME"
-        private const val ACTION_STOP = "bpm.munkz.pulse_wear.os.metronome.presentation.action.STOP_METRONOME"
+        private const val ACTION_START = "bpm.munkz.pulse_wear.os.bpm.presentation.action.START_METRONOME"
+        private const val ACTION_STOP = "bpm.munkz.pulse_wear.os.bpm.presentation.action.STOP_METRONOME"
         private const val MIN_BEATS_PER_MEASURE = 2
         private const val MAX_BEATS_PER_MEASURE = 16
         private const val METRONOME_CHANNEL_ID = "metronome_playback"

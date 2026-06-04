@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation
+package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
@@ -50,6 +50,7 @@ private fun ColorPickerRow(
     selectedColorArgb: Int,
     onColorChoice: (Int) -> Unit,
     colorOptions: List<Int> = PulseColorOptions,
+    enabled: Boolean = true,
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -64,6 +65,7 @@ private fun ColorPickerRow(
                     ColorSwatchButton(
                         colorArgb = colorArgb,
                         selected = selectedColorArgb == colorArgb,
+                        enabled = enabled,
                         onClick = { onColorChoice(colorArgb) },
                     )
                 }
@@ -76,13 +78,15 @@ private fun ColorPickerRow(
 private fun ColorSwatchButton(
     colorArgb: Int,
     selected: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(9.dp)
+    val enabledAlpha = if (enabled) 1f else 0.28f
     val borderColor = if (selected) {
-        MaterialTheme.colorScheme.onBackground
+        MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha)
     } else {
-        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.28f)
+        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.28f * enabledAlpha)
     }
     val baseModifier = Modifier
         .width(36.dp)
@@ -90,9 +94,9 @@ private fun ColorSwatchButton(
         .clip(shape)
         .then(
             if (isRainbowColor(colorArgb)) {
-                Modifier.background(Brush.horizontalGradient(RainbowColors), shape)
+                Modifier.background(Brush.horizontalGradient(RainbowColors.map { it.copy(alpha = enabledAlpha) }), shape)
             } else {
-                Modifier.background(colorFromChoice(colorArgb), shape)
+                Modifier.background(colorFromChoice(colorArgb).copy(alpha = enabledAlpha), shape)
             },
         )
         .border(
@@ -100,7 +104,7 @@ private fun ColorSwatchButton(
             color = borderColor,
             shape = shape,
         )
-        .clickable(onClick = onClick)
+        .clickable(enabled = enabled, onClick = onClick)
 
     Box(
         modifier = baseModifier,
@@ -153,6 +157,7 @@ private fun BigRingModePicker(
     selectedMode: BigRingFlashMode,
     appLanguage: AppLanguage,
     onModeChoice: (BigRingFlashMode) -> Unit,
+    enabled: Boolean = true,
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -165,6 +170,7 @@ private fun BigRingModePicker(
                 modifier = Modifier
                     .width(42.dp)
                     .height(26.dp),
+                enabled = enabled,
                 onClick = { onModeChoice(choice.mode) },
             )
         }
@@ -175,6 +181,7 @@ private fun BigRingModePicker(
 private fun LanguagePicker(
     selectedLanguage: AppLanguage,
     onLanguageChoice: (AppLanguage) -> Unit,
+    enabled: Boolean = true,
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -190,7 +197,445 @@ private fun LanguagePicker(
                 modifier = Modifier
                     .width(42.dp)
                     .height(26.dp),
+                enabled = enabled,
                 onClick = { onLanguageChoice(language) },
+            )
+        }
+    }
+}
+
+@Composable
+internal fun SimpleSettingsPage(
+    appText: AppText,
+    hapticsEnabled: Boolean,
+    beepEnabled: Boolean,
+    beatSoundMode: BeatSoundMode,
+    keepScreenMode: KeepScreenMode,
+    mainColorArgb: Int,
+    backgroundColorArgb: Int,
+    ringColorArgb: Int,
+    bigRingFlashMode: BigRingFlashMode,
+    appLanguage: AppLanguage,
+    appCpuUsagePercent: Float?,
+    showBuyNowButton: Boolean,
+    settingsEnabled: Boolean = true,
+    trialStatusText: String = "Settings locked",
+    trialButtonText: String = "30 Day Trial",
+    trialButtonEnabled: Boolean = true,
+    onStartTrial: () -> Unit = {},
+    onHapticsToggle: () -> Unit,
+    onBeepToggle: () -> Unit,
+    onBeatSoundModeChoice: (BeatSoundMode) -> Unit,
+    onKeepScreenModeChoice: (KeepScreenMode) -> Unit,
+    onMainColorChoice: (Int) -> Unit,
+    onBackgroundColorChoice: (Int) -> Unit,
+    onRingColorChoice: (Int) -> Unit,
+    onBigRingModeChoice: (BigRingFlashMode) -> Unit,
+    onLanguageChoice: (AppLanguage) -> Unit,
+) {
+    var buyNowPopupOpen by rememberSaveable { mutableStateOf(false) }
+    val settingsScrollState = rememberScrollState()
+
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        val watchSClass = minOf(maxWidth, maxHeight) <= 200.dp
+        val contentHorizontalPadding = if (watchSClass) 8.dp else 12.dp
+        val contentVerticalPadding = if (watchSClass) 12.dp else 18.dp
+        val titleFontSize = if (watchSClass) 15.sp else 17.sp
+        val sectionTitleFontSize = if (watchSClass) 11.sp else 12.sp
+        val labelFontSize = if (watchSClass) 9.sp else 10.sp
+        val choiceWidth = if (watchSClass) 38.dp else 42.dp
+        val choiceHeight = if (watchSClass) 24.dp else 26.dp
+        val tightSpacing = if (watchSClass) 3.dp else 4.dp
+        val sectionSpacing = if (watchSClass) 7.dp else 9.dp
+        val scrollIndicatorHeight = if (watchSClass) 104.dp else 118.dp
+
+        Column(
+            modifier = Modifier
+                .verticalScroll(settingsScrollState)
+                .padding(horizontal = contentHorizontalPadding, vertical = contentVerticalPadding),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (showBuyNowButton) {
+                SettingsCommandButton(
+                    text = "BUY NOW",
+                    prominent = true,
+                    modifier = Modifier
+                        .width(if (watchSClass) 116.dp else 130.dp)
+                        .height(if (watchSClass) 28.dp else 30.dp),
+                    fontSize = if (watchSClass) 12.sp else 13.sp,
+                    onClick = {
+                        buyNowPopupOpen = true
+                    },
+                )
+
+                Spacer(modifier = Modifier.height(if (watchSClass) 5.dp else 7.dp))
+            }
+
+            Text(
+                text = appText.settings,
+                fontSize = titleFontSize,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ChoicePillButton(
+                    text = appText.haptics,
+                    selected = hapticsEnabled,
+                    modifier = Modifier
+                        .width(choiceWidth)
+                        .height(choiceHeight),
+                    enabled = settingsEnabled,
+                    onClick = onHapticsToggle,
+                )
+                ChoicePillButton(
+                    text = appText.beep,
+                    selected = beepEnabled,
+                    modifier = Modifier
+                        .width(choiceWidth)
+                        .height(choiceHeight),
+                    enabled = settingsEnabled,
+                    onClick = onBeepToggle,
+                )
+                ChoicePillButton(
+                    text = appText.wood,
+                    selected = beatSoundMode == BeatSoundMode.Wood,
+                    modifier = Modifier
+                        .width(choiceWidth)
+                        .height(choiceHeight),
+                    enabled = settingsEnabled,
+                    onClick = { onBeatSoundModeChoice(BeatSoundMode.Wood) },
+                )
+                ChoicePillButton(
+                    text = appText.bell,
+                    selected = beatSoundMode == BeatSoundMode.Bell,
+                    modifier = Modifier
+                        .width(choiceWidth)
+                        .height(choiceHeight),
+                    enabled = settingsEnabled,
+                    onClick = { onBeatSoundModeChoice(BeatSoundMode.Bell) },
+                )
+            }
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.keepScreenOn,
+                fontSize = labelFontSize,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+
+            Spacer(modifier = Modifier.height(tightSpacing))
+
+            KeepScreenModeButtons(
+                selectedMode = keepScreenMode,
+                appText = appText,
+                enabled = settingsEnabled,
+                onModeChoice = onKeepScreenModeChoice,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.theme,
+                fontSize = sectionTitleFontSize,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Spacer(modifier = Modifier.height(tightSpacing))
+
+            Text(
+                text = appText.mainColor,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            ColorPickerRow(
+                selectedColorArgb = mainColorArgb,
+                onColorChoice = onMainColorChoice,
+                colorOptions = ThemeMainColorOptions,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.backgroundColor,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            ColorPickerRow(
+                selectedColorArgb = backgroundColorArgb,
+                onColorChoice = onBackgroundColorChoice,
+                colorOptions = ThemeBackgroundColorOptions,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.bigRing,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            ColorPickerRow(
+                selectedColorArgb = ringColorArgb,
+                onColorChoice = onRingColorChoice,
+                colorOptions = PulseColorOptions,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(tightSpacing))
+
+            BigRingModePicker(
+                selectedMode = bigRingFlashMode,
+                appLanguage = appLanguage,
+                enabled = settingsEnabled,
+                onModeChoice = onBigRingModeChoice,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.language,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            LanguagePicker(
+                selectedLanguage = appLanguage,
+                onLanguageChoice = onLanguageChoice,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            SettingsDiagnosticsSection(
+                appText = appText,
+                appCpuUsagePercent = appCpuUsagePercent,
+                titleFontSize = sectionTitleFontSize,
+                spacing = tightSpacing,
+            )
+        }
+
+        SettingsScrollIndicator(
+            scrollState = settingsScrollState,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 4.dp)
+                .width(4.dp)
+                .height(scrollIndicatorHeight),
+        )
+
+        if (buyNowPopupOpen) {
+            BuyNowChoicePopup(
+                trialStatusText = trialStatusText,
+                trialButtonText = trialButtonText,
+                trialButtonEnabled = trialButtonEnabled,
+                onStartTrial = {
+                    onStartTrial()
+                    buyNowPopupOpen = false
+                },
+                onDismiss = {
+                    buyNowPopupOpen = false
+                },
+            )
+        }
+    }
+}
+
+@Composable
+internal fun TuneSettingsPage(
+    appText: AppText,
+    a4ReferenceHz: Int,
+    mainColorArgb: Int,
+    backgroundColorArgb: Int,
+    appLanguage: AppLanguage,
+    appCpuUsagePercent: Float?,
+    keepScreenMode: KeepScreenMode,
+    showBuyNowButton: Boolean,
+    settingsEnabled: Boolean,
+    trialStatusText: String,
+    trialButtonText: String,
+    trialButtonEnabled: Boolean,
+    onStartTrial: () -> Unit,
+    onA4ReferenceHzChange: (Int) -> Unit,
+    onKeepScreenModeChoice: (KeepScreenMode) -> Unit,
+    onMainColorChoice: (Int) -> Unit,
+    onBackgroundColorChoice: (Int) -> Unit,
+    onLanguageChoice: (AppLanguage) -> Unit,
+) {
+    val settingsScrollState = rememberScrollState()
+    var buyNowPopupOpen by rememberSaveable { mutableStateOf(false) }
+
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        val watchSClass = minOf(maxWidth, maxHeight) <= 200.dp
+        val contentHorizontalPadding = if (watchSClass) 8.dp else 12.dp
+        val contentVerticalPadding = if (watchSClass) 14.dp else 20.dp
+        val titleFontSize = if (watchSClass) 15.sp else 17.sp
+        val sectionTitleFontSize = if (watchSClass) 11.sp else 12.sp
+        val labelFontSize = if (watchSClass) 9.sp else 10.sp
+        val tightSpacing = if (watchSClass) 3.dp else 4.dp
+        val sectionSpacing = if (watchSClass) 8.dp else 11.dp
+        val scrollIndicatorHeight = if (watchSClass) 104.dp else 118.dp
+
+        Column(
+            modifier = Modifier
+                .verticalScroll(settingsScrollState)
+                .padding(horizontal = contentHorizontalPadding, vertical = contentVerticalPadding),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (showBuyNowButton) {
+                SettingsCommandButton(
+                    text = "BUY NOW",
+                    prominent = true,
+                    modifier = Modifier
+                        .width(if (watchSClass) 116.dp else 130.dp)
+                        .height(if (watchSClass) 28.dp else 30.dp),
+                    fontSize = if (watchSClass) 12.sp else 13.sp,
+                    onClick = {
+                        buyNowPopupOpen = true
+                    },
+                )
+
+                Spacer(modifier = Modifier.height(if (watchSClass) 5.dp else 7.dp))
+            }
+
+            Text(
+                text = appText.settings,
+                fontSize = titleFontSize,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            A4ReferenceControl(
+                label = appText.a4Reference,
+                referenceHz = a4ReferenceHz,
+                enabled = settingsEnabled,
+                onReferenceHzChange = onA4ReferenceHzChange,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.keepScreenOn,
+                fontSize = labelFontSize,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = if (settingsEnabled) 1f else 0.34f),
+            )
+
+            Spacer(modifier = Modifier.height(tightSpacing))
+
+            KeepScreenModeButtons(
+                selectedMode = keepScreenMode,
+                appText = appText,
+                enabled = settingsEnabled,
+                onModeChoice = onKeepScreenModeChoice,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.theme,
+                fontSize = sectionTitleFontSize,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Spacer(modifier = Modifier.height(tightSpacing))
+
+            Text(
+                text = appText.mainColor,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            ColorPickerRow(
+                selectedColorArgb = mainColorArgb,
+                onColorChoice = onMainColorChoice,
+                colorOptions = ThemeMainColorOptions,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.backgroundColor,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            ColorPickerRow(
+                selectedColorArgb = backgroundColorArgb,
+                onColorChoice = onBackgroundColorChoice,
+                colorOptions = ThemeBackgroundColorOptions,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.language,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            LanguagePicker(
+                selectedLanguage = appLanguage,
+                onLanguageChoice = onLanguageChoice,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            SettingsDiagnosticsSection(
+                appText = appText,
+                appCpuUsagePercent = appCpuUsagePercent,
+                titleFontSize = sectionTitleFontSize,
+                spacing = tightSpacing,
+            )
+        }
+
+        SettingsScrollIndicator(
+            scrollState = settingsScrollState,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 4.dp)
+                .width(4.dp)
+                .height(scrollIndicatorHeight),
+        )
+
+        if (buyNowPopupOpen) {
+            BuyNowChoicePopup(
+                trialStatusText = trialStatusText,
+                trialButtonText = trialButtonText,
+                trialButtonEnabled = trialButtonEnabled,
+                onStartTrial = {
+                    onStartTrial()
+                    buyNowPopupOpen = false
+                },
+                onDismiss = {
+                    buyNowPopupOpen = false
+                },
             )
         }
     }
@@ -217,6 +662,8 @@ internal fun SettingsPage(
     bigRingFlashMode: BigRingFlashMode,
     appLanguage: AppLanguage,
     appCpuUsagePercent: Float?,
+    compactSettings: Boolean = false,
+    showBuyNowButton: Boolean = false,
     onHapticsToggle: () -> Unit,
     onBeepToggle: () -> Unit,
     onBeatSoundModeChoice: (BeatSoundMode) -> Unit,
@@ -235,6 +682,37 @@ internal fun SettingsPage(
     onBigRingModeChoice: (BigRingFlashMode) -> Unit,
     onLanguageChoice: (AppLanguage) -> Unit,
 ) {
+    if (compactSettings) {
+        SimpleSettingsPage(
+            appText = appText,
+            hapticsEnabled = hapticsEnabled,
+            beepEnabled = beepEnabled,
+            beatSoundMode = beatSoundMode,
+            keepScreenMode = keepScreenMode,
+            mainColorArgb = mainColorArgb,
+            backgroundColorArgb = backgroundColorArgb,
+            ringColorArgb = ringColorArgb,
+            bigRingFlashMode = bigRingFlashMode,
+            appLanguage = appLanguage,
+            appCpuUsagePercent = appCpuUsagePercent,
+            showBuyNowButton = showBuyNowButton,
+            settingsEnabled = true,
+            trialStatusText = "Settings unlocked",
+            trialButtonText = "30 Day Trial",
+            trialButtonEnabled = false,
+            onHapticsToggle = onHapticsToggle,
+            onBeepToggle = onBeepToggle,
+            onBeatSoundModeChoice = onBeatSoundModeChoice,
+            onKeepScreenModeChoice = onKeepScreenModeChoice,
+            onMainColorChoice = onMainColorChoice,
+            onBackgroundColorChoice = onBackgroundColorChoice,
+            onRingColorChoice = onRingColorChoice,
+            onBigRingModeChoice = onBigRingModeChoice,
+            onLanguageChoice = onLanguageChoice,
+        )
+        return
+    }
+
     var intensityPickerOpen by rememberSaveable { mutableStateOf(false) }
     val settingsScrollState = rememberScrollState()
 
@@ -509,18 +987,11 @@ internal fun SettingsPage(
 
             Spacer(modifier = Modifier.height(sectionSpacing))
 
-            Text(
-                text = appText.diagnostics,
-                fontSize = sectionTitleFontSize,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-            )
-
-            Spacer(modifier = Modifier.height(tightSpacing))
-
-            CpuUsageReadout(
-                label = appText.appCpu,
-                cpuUsagePercent = appCpuUsagePercent,
+            SettingsDiagnosticsSection(
+                appText = appText,
+                appCpuUsagePercent = appCpuUsagePercent,
+                titleFontSize = sectionTitleFontSize,
+                spacing = tightSpacing,
             )
         }
 
@@ -627,11 +1098,35 @@ private fun CpuUsageReadout(
 }
 
 @Composable
+private fun SettingsDiagnosticsSection(
+    appText: AppText,
+    appCpuUsagePercent: Float?,
+    titleFontSize: TextUnit,
+    spacing: androidx.compose.ui.unit.Dp,
+) {
+    Text(
+        text = appText.diagnostics,
+        fontSize = titleFontSize,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.primary,
+    )
+
+    Spacer(modifier = Modifier.height(spacing))
+
+    CpuUsageReadout(
+        label = appText.appCpu,
+        cpuUsagePercent = appCpuUsagePercent,
+    )
+}
+
+@Composable
 private fun A4ReferenceControl(
     label: String,
     referenceHz: Int,
+    enabled: Boolean = true,
     onReferenceHzChange: (Int) -> Unit,
 ) {
+    val enabledAlpha = if (enabled) 1f else 0.34f
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -639,7 +1134,7 @@ private fun A4ReferenceControl(
             text = label,
             fontSize = 11.sp,
             textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
         )
 
         Spacer(modifier = Modifier.height(3.dp))
@@ -654,6 +1149,7 @@ private fun A4ReferenceControl(
                     .width(24.dp)
                     .height(22.dp),
                 fontSize = 11.sp,
+                enabled = enabled,
                 onClick = {
                     onReferenceHzChange((referenceHz - 1).coerceAtLeast(MIN_A4_REFERENCE_HZ))
                 },
@@ -664,7 +1160,7 @@ private fun A4ReferenceControl(
                 modifier = Modifier.width(72.dp),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = enabledAlpha),
                 textAlign = TextAlign.Center,
                 maxLines = 1,
             )
@@ -675,6 +1171,7 @@ private fun A4ReferenceControl(
                     .width(24.dp)
                     .height(22.dp),
                 fontSize = 11.sp,
+                enabled = enabled,
                 onClick = {
                     onReferenceHzChange((referenceHz + 1).coerceAtMost(MAX_A4_REFERENCE_HZ))
                 },
@@ -1049,6 +1546,7 @@ private fun KeepScreenModeButtons(
     selectedMode: KeepScreenMode,
     appText: AppText,
     onModeChoice: (KeepScreenMode) -> Unit,
+    enabled: Boolean = true,
 ) {
     val choices = listOf(
         KeepScreenMode.AppOpen to appText.keepScreenAppOpen,
@@ -1067,11 +1565,95 @@ private fun KeepScreenModeButtons(
                 modifier = Modifier
                     .width(42.dp)
                     .height(26.dp),
+                enabled = enabled,
                 onClick = { onModeChoice(mode) },
             )
         }
     }
 }
+
+@Composable
+private fun BuyNowChoicePopup(
+    trialStatusText: String,
+    trialButtonText: String,
+    trialButtonEnabled: Boolean,
+    onStartTrial: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    BackHandler(onBack = onDismiss)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.94f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "Choose Upgrade",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+
+            Text(
+                text = trialStatusText,
+                modifier = Modifier.width(144.dp),
+                fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            SettingsCommandButton(
+                text = trialButtonText,
+                modifier = Modifier
+                    .width(136.dp)
+                    .height(30.dp),
+                fontSize = 11.sp,
+                prominent = true,
+                enabled = trialButtonEnabled,
+                onClick = onStartTrial,
+            )
+
+            SettingsCommandButton(
+                text = "Buy this app",
+                modifier = Modifier
+                    .width(136.dp)
+                    .height(30.dp),
+                fontSize = 11.sp,
+                prominent = true,
+                onClick = onDismiss,
+            )
+
+            SettingsCommandButton(
+                text = "Pulse Pro",
+                modifier = Modifier
+                    .width(136.dp)
+                    .height(30.dp),
+                fontSize = 11.sp,
+                prominent = true,
+                onClick = onDismiss,
+            )
+
+            SettingsCommandButton(
+                text = "Done",
+                modifier = Modifier
+                    .width(72.dp)
+                    .height(26.dp),
+                fontSize = 10.sp,
+                onClick = onDismiss,
+            )
+        }
+    }
+}
+
 @Composable
 private fun SettingsDoneButton(
     text: String,
@@ -1096,17 +1678,19 @@ private fun SettingsCommandButton(
     fontSize: TextUnit = 11.sp,
     selected: Boolean = false,
     prominent: Boolean = false,
+    enabled: Boolean = true,
 ) {
     val shape = RoundedCornerShape(50)
+    val enabledAlpha = if (enabled) 1f else 0.34f
     val backgroundColor = when {
-        prominent -> MaterialTheme.colorScheme.primary
-        selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.34f)
-        else -> Color.Black.copy(alpha = 0.42f)
+        prominent -> MaterialTheme.colorScheme.primary.copy(alpha = enabledAlpha)
+        selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.34f * enabledAlpha)
+        else -> Color.Black.copy(alpha = 0.42f * enabledAlpha)
     }
     val borderColor = if (selected || prominent) {
-        MaterialTheme.colorScheme.primary
+        MaterialTheme.colorScheme.primary.copy(alpha = enabledAlpha)
     } else {
-        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.24f)
+        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.24f * enabledAlpha)
     }
 
     Box(
@@ -1118,7 +1702,7 @@ private fun SettingsCommandButton(
                 color = borderColor,
                 shape = shape,
             )
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -1126,9 +1710,9 @@ private fun SettingsCommandButton(
             fontSize = fontSize,
             fontWeight = FontWeight.Bold,
             color = if (prominent) {
-                MaterialTheme.colorScheme.onPrimary
+                MaterialTheme.colorScheme.onPrimary.copy(alpha = enabledAlpha)
             } else {
-                MaterialTheme.colorScheme.onBackground
+                MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha)
             },
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

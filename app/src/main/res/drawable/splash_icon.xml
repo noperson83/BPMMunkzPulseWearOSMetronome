@@ -3,6 +3,6 @@
     <item
         android:width="96dp"
         android:height="96dp"
-        android:drawable="@drawable/bpm_munkz_app_logo"
+        android:drawable="@drawable/bpm_munkz_app_logo_free"
         android:gravity="center" />
 </layer-list>

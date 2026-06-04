@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Munkz Pulse Pro</string>
+    <string name="tile_label">Pulse Pro</string>
+    <string name="tile_description">Acceso rápido para Munkz Pulse Pro.</string>
+</resources>

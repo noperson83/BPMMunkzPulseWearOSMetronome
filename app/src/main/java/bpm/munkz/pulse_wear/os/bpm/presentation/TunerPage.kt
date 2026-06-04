@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation
+package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import android.graphics.Paint
 import androidx.activity.compose.BackHandler
@@ -51,8 +51,13 @@ fun TunerPage(
     appText: AppText,
     appLanguage: AppLanguage,
     audioAnalysisState: AudioAnalysisState,
+    a4ReferenceHz: Int,
     selectedProfile: TunerListenProfile,
     micPermissionGranted: Boolean,
+    showSaveActions: Boolean = true,
+    onOpenSpectrum: () -> Unit,
+    onOpenKey: () -> Unit,
+    onOpenSettings: () -> Unit,
     onProfileChoice: (TunerListenProfile) -> Unit,
     onSaveKey: (String) -> Unit,
     onSaveBpm: (Int) -> Unit,
@@ -61,6 +66,7 @@ fun TunerPage(
     val guessedKey = audioAnalysisState.guessedKey
     val likelyChords = audioAnalysisState.likelyChords
     val detectedBpm = audioAnalysisState.detectedTempoBpm
+    val peakReading = audioAnalysisState.spectrum.peakSpectrumReading()
     var keySaveRoot by rememberSaveable { mutableStateOf<String?>(null) }
 
     BoxWithConstraints(
@@ -76,16 +82,14 @@ fun TunerPage(
         val centsFontSize = if (watchSClass) 10.sp else 11.sp
         val recentNotesFontSize = if (watchSClass) 9.sp else 10.sp
         val centerWidth = if (watchSClass) 112.dp else 126.dp
-        val profileButtonWidth = if (watchSClass) 32.dp else 36.dp
-        val profileButtonHeight = if (watchSClass) 21.dp else 23.dp
-        val profileButtonFontSize = if (watchSClass) 7.sp else 8.sp
-        val profileSpacing = if (watchSClass) 3.dp else 4.dp
-        val tempoTopPadding = if (watchSClass) 9.dp else 12.dp
-        val tempoStartPadding = if (watchSClass) 12.dp else 18.dp
+        val profileButtonWidth = if (watchSClass) 38.dp else 44.dp
+        val profileButtonHeight = if (watchSClass) 27.dp else 30.dp
+        val profileButtonFontSize = if (watchSClass) 8.sp else 9.sp
         val keyColumnWidth = if (watchSClass) 42.dp else 48.dp
         val keyGuessLabelFontSize = if (watchSClass) 8.sp else 9.sp
         val keyGuessFontSize = if (watchSClass) 13.sp else 15.sp
         val chordFontSize = if (watchSClass) 8.sp else 9.sp
+        val peakFontSize = if (watchSClass) 8.sp else 9.sp
 
         if (!micPermissionGranted) {
             Column(
@@ -106,37 +110,42 @@ fun TunerPage(
             return@BoxWithConstraints
         }
 
-        TunerTempoReadout(
-            detectedBpm = detectedBpm,
+        TunerProfileButton(
+            text = "Set",
+            selected = false,
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = tempoStartPadding, top = tempoTopPadding)
-                .width(52.dp),
+                .align(Alignment.TopEnd)
+                .padding(top = if (watchSClass) 20.dp else 24.dp, end = if (watchSClass) 10.dp else 12.dp)
+                .rotate(38f)
+                .width(if (watchSClass) 52.dp else 58.dp)
+                .height(if (watchSClass) 23.dp else 24.dp),
+            fontSize = if (watchSClass) 8.sp else 9.sp,
+            onClick = onOpenSettings,
         )
 
         Column(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .padding(start = 0.dp),
-            verticalArrangement = Arrangement.spacedBy(profileSpacing),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
-            VisibleTunerListenProfiles.forEach { profile ->
-                val isSelectedProfile = selectedProfile == profile
-                TunerProfileButton(
-                    text = profile.labelFor(appLanguage),
-                    selected = isSelectedProfile,
-                    modifier = Modifier
-                        .width(profileButtonWidth)
-                        .height(profileButtonHeight),
-                    fontSize = profileButtonFontSize,
-                    onClick = {
-                        onProfileChoice(
-                            if (isSelectedProfile) TunerListenProfile.Full else profile,
-                        )
-                    },
-                )
-            }
+            TunerTempoReadout(
+                detectedBpm = detectedBpm,
+                modifier = Modifier.width(52.dp),
+            )
+
+            Spacer(modifier = Modifier.height(if (watchSClass) 3.dp else 4.dp))
+
+            TunerProfileButton(
+                text = selectedProfile.labelFor(appLanguage),
+                selected = true,
+                modifier = Modifier
+                    .width(profileButtonWidth)
+                    .height(profileButtonHeight),
+                fontSize = profileButtonFontSize,
+                onClick = onOpenSpectrum,
+            )
         }
 
         Column(
@@ -190,6 +199,20 @@ fun TunerPage(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+
+            Spacer(modifier = Modifier.height(1.dp))
+
+            Text(
+                text = peakReading?.let { peak ->
+                    val noteName = peak.frequencyHz.toNoteReading(a4ReferenceHz).first
+                    "${peak.frequencyHz.roundToInt()} Hz  $noteName  ${peak.bandLabel}"
+                } ?: "-- Hz",
+                fontSize = peakFontSize,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
 
         Column(
@@ -199,23 +222,28 @@ fun TunerPage(
                 .width(keyColumnWidth),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(
-                text = "${appText.keyGuess}:",
-                fontSize = keyGuessLabelFontSize,
-                fontWeight = FontWeight.Normal,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-            )
+            Column(
+                modifier = Modifier.clickable(onClick = onOpenKey),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = "${appText.keyGuess}:",
+                    fontSize = keyGuessLabelFontSize,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                )
 
-            Text(
-                text = guessedKey ?: "--",
-                fontSize = keyGuessFontSize,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-            )
+                Text(
+                    text = guessedKey ?: "--",
+                    fontSize = keyGuessFontSize,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                )
+            }
 
             Spacer(modifier = Modifier.height(2.dp))
 
@@ -231,7 +259,7 @@ fun TunerPage(
             }
         }
 
-        if (detectedBpm != null) {
+        if (showSaveActions && detectedBpm != null) {
             TunerBottomActionButton(
                 text = appText.saveBpm,
                 modifier = Modifier.align(Alignment.BottomStart),
@@ -240,7 +268,7 @@ fun TunerPage(
             )
         }
 
-        if (guessedKey != null) {
+        if (showSaveActions && guessedKey != null) {
             TunerBottomActionButton(
                 text = appText.saveKey,
                 modifier = Modifier.align(Alignment.BottomEnd),
@@ -481,7 +509,7 @@ private fun TunerNeedle(cents: Int) {
 }
 
 @Composable
-private fun TunerProfileButton(
+internal fun TunerProfileButton(
     text: String,
     selected: Boolean,
     onClick: () -> Unit,

@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation
+package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import android.app.PendingIntent
 import android.content.ComponentName

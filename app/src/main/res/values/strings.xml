@@ -1,7 +1,7 @@
 <resources>
-    <string name="app_name">BPM Munkz Pulse Free</string>
-    <string name="tile_label">Pulse</string>
-    <string name="tile_description">Quick launch tile for BPM Munkz Pulse.</string>
+    <string name="app_name">Munkz BPM Metronome</string>
+    <string name="tile_label">BPM Metro</string>
+    <string name="tile_description">Quick launch tile for Munkz BPM Metronome.</string>
     <string name="tile_open">Open</string>
     <string name="complication_latest_bpm">Latest BPM</string>
     <string name="complication_latest_key">Latest Key</string>

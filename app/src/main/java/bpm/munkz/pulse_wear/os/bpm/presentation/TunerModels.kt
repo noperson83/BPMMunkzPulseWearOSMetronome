@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation
+package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import androidx.compose.ui.graphics.Color
 
@@ -45,11 +45,12 @@ enum class TunerListenProfile(
     Bass("Bass", "Bajo", 38f, 330f),
 }
 
-val VisibleTunerListenProfiles = listOf(
-    TunerListenProfile.High,
+val SpectrumTunerListenProfiles = listOf(
+    TunerListenProfile.Full,
+    TunerListenProfile.Bass,
     TunerListenProfile.Guitar,
     TunerListenProfile.Voice,
-    TunerListenProfile.Bass,
+    TunerListenProfile.High,
 )
 
 fun TunerListenProfile.labelFor(language: AppLanguage): String {

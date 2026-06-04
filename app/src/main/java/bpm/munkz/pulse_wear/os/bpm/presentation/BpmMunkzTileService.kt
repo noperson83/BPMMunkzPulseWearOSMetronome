@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation
+package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import android.content.ComponentName
 import androidx.wear.protolayout.ActionBuilders.launchAction
@@ -29,12 +29,12 @@ import androidx.wear.protolayout.modifiers.clickable
 import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders.Tile
 import androidx.wear.tiles.TileService
-import bpm.munkz.pulse_wear.os.metronome.R
+import bpm.munkz.pulse_wear.os.bpm.R
 import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 
-private const val TILE_LOGO_RESOURCE_ID = "bpm_munkz_tile_logo"
+private const val TILE_LOGO_RESOURCE_ID = "bpm_munkz_tile_logo_free_v2"
 
 @ProtoLayoutExperimental
 class BpmMunkzTileService : TileService() {
@@ -137,7 +137,7 @@ private fun tileLogoResource(): ImageResource =
     ImageResource.Builder()
         .setAndroidResourceByResId(
             AndroidImageResourceByResId.Builder()
-                .setResourceId(R.drawable.bpm_munkz_app_logo)
+                .setResourceId(R.drawable.bpm_munkz_app_logo_free)
                 .build(),
         )
         .build()

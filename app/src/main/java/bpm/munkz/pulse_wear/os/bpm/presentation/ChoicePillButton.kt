@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation
+package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,17 +26,19 @@ internal fun ChoicePillButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 9.sp,
+    enabled: Boolean = true,
 ) {
     val shape = RoundedCornerShape(50)
+    val enabledAlpha = if (enabled) 1f else 0.34f
     val backgroundColor = if (selected) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.34f)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.34f * enabledAlpha)
     } else {
-        Color.Black.copy(alpha = 0.34f)
+        Color.Black.copy(alpha = 0.34f * enabledAlpha)
     }
     val borderColor = if (selected) {
-        MaterialTheme.colorScheme.primary
+        MaterialTheme.colorScheme.primary.copy(alpha = enabledAlpha)
     } else {
-        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.24f)
+        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.24f * enabledAlpha)
     }
 
     Box(
@@ -48,7 +50,7 @@ internal fun ChoicePillButton(
                 color = borderColor,
                 shape = shape,
             )
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -56,9 +58,9 @@ internal fun ChoicePillButton(
             fontSize = fontSize,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             color = if (selected) {
-                MaterialTheme.colorScheme.primary
+                MaterialTheme.colorScheme.primary.copy(alpha = enabledAlpha)
             } else {
-                MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f)
+                MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f * enabledAlpha)
             },
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

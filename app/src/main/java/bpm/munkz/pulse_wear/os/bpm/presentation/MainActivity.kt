@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation
+package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import android.Manifest
 import android.app.Activity
@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -75,10 +76,12 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.ui.tooling.preview.WearPreviewDevices
 import androidx.wear.compose.ui.tooling.preview.WearPreviewFontScales
-import bpm.munkz.pulse_wear.os.metronome.R
-import bpm.munkz.pulse_wear.os.metronome.presentation.theme.BPMMunkzPulseTheme
+import bpm.munkz.pulse_wear.os.bpm.R
+import bpm.munkz.pulse_wear.os.bpm.presentation.theme.BPMMunkzPulseTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
+import java.time.LocalDate
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -94,10 +97,16 @@ private const val TAP_TEMPO_RESET_TIMEOUT_MS = 2_000L
 private const val TAP_TEMPO_SAMPLE_COUNT = 5
 private const val MAIN_PAGE_INDEX = 0
 private const val RHYTHM_PAGE_INDEX = 1
-private const val SETTINGS_PAGE_INDEX = 2
-private const val TAP_TEMPO_FREE_PAGE_INDEX = 3
-internal const val ACTION_OPEN_SPECTRUM = "bpm.munkz.pulse_wear.os.metronome.action.OPEN_SPECTRUM"
-internal const val EXTRA_OPEN_SPECTRUM = "bpm.munkz.pulse_wear.os.metronome.extra.OPEN_SPECTRUM"
+private const val TAP_TEMPO_FREE_PAGE_INDEX = 2
+private const val SETTINGS_PAGE_INDEX = 3
+private const val FREE_TAP_PAGE_INDEX = 0
+private const val FREE_SETTINGS_PAGE_INDEX = 1
+private const val TUNE_TUNER_PAGE_INDEX = 0
+private const val TUNE_SPECTRUM_PAGE_INDEX = 1
+private const val TUNE_KEY_PAGE_INDEX = 2
+private const val TUNE_SETTINGS_PAGE_INDEX = 3
+internal const val ACTION_OPEN_SPECTRUM = "bpm.munkz.pulse_wear.os.bpm.action.OPEN_SPECTRUM"
+internal const val EXTRA_OPEN_SPECTRUM = "bpm.munkz.pulse_wear.os.bpm.extra.OPEN_SPECTRUM"
 private const val PAGER_TOUCH_VISUAL_QUIET_MS = 900L
 private const val SETTINGS_PREFS = "bpm_munkz_settings"
 private const val KEEP_SCREEN_AWAKE_WHILE_PLAYING_KEY = "keep_screen_awake_while_playing"
@@ -110,6 +119,11 @@ private const val SETTINGS_CLOCK_IMAGE_INDEX_KEY = "clock_image_index"
 private const val SETTINGS_RING_COLOR_KEY = "ring_color"
 private const val SETTINGS_RING_MODE_KEY = "ring_mode"
 private const val SETTINGS_LANGUAGE_INDEX_KEY = "language_index"
+private const val FREE_SETTINGS_TRIAL_STARTED_DAY_KEY = "free_settings_trial_started_day"
+private const val FREE_SETTINGS_TRIAL_DURATION_DAYS = 30
+private const val FREE_SETTINGS_TRIAL_COOLDOWN_DAYS = 30
+private const val FREE_SETTINGS_TRIAL_RESET_DAYS =
+    FREE_SETTINGS_TRIAL_DURATION_DAYS + FREE_SETTINGS_TRIAL_COOLDOWN_DAYS
 internal const val DEFAULT_TEMPO_NUDGE_MS = 200
 internal const val MIN_TEMPO_NUDGE_MS = 50
 internal const val MAX_TEMPO_NUDGE_MS = 250
@@ -510,7 +524,7 @@ private fun AppLaunchSplashScreen() {
         contentAlignment = Alignment.Center,
     ) {
         Image(
-            painter = painterResource(id = R.drawable.bpm_munkz_app_logo),
+            painter = painterResource(id = R.drawable.bpm_munkz_app_logo_free),
             contentDescription = "BPM Munkz Pulse",
             contentScale = ContentScale.Fit,
             modifier = Modifier
@@ -671,6 +685,8 @@ fun BeatPulseScreen(
     val tapTempoTimes = remember { mutableListOf<Long>() }
     val appFeatures = AppEditionConfig.features
     val pagerState = rememberPagerState(pageCount = { appFeatures.pageCount })
+    val pagerScope = rememberCoroutineScope()
+    var tunePageIndex by rememberSaveable { mutableIntStateOf(TUNE_TUNER_PAGE_INDEX) }
     val playlistIndex = selectedPlaylistIndexState.intValue.coerceIn(0, playlists.lastIndex)
     val currentPlaylist = playlists[playlistIndex]
     val songIndex = selectedSongIndexState.intValue.coerceIn(0, currentPlaylist.songs.lastIndex)
@@ -679,6 +695,16 @@ fun BeatPulseScreen(
     val bigRingFlashMode = BigRingFlashMode.fromPersistedValue(bigRingModeState.intValue)
     val appLanguage = AppLanguages[appLanguageIndexState.intValue.coerceIn(0, AppLanguages.lastIndex)]
     val appText = appTextFor(appLanguage)
+    val todayEpochDay = currentEpochDay()
+    var freeSettingsTrialStartedDay by rememberSaveable {
+        mutableLongStateOf(
+            if (isPreview) 0L else context.loadSettingsLong(FREE_SETTINGS_TRIAL_STARTED_DAY_KEY, 0L),
+        )
+    }
+    val freeSettingsTrialState = freeSettingsTrialState(
+        trialStartedDay = freeSettingsTrialStartedDay,
+        todayEpochDay = todayEpochDay,
+    )
     val appCpuUsagePercent = rememberAppCpuUsagePercent(enabled = !isPreview)
     var micPermissionGranted by remember(context, isPreview) {
         mutableStateOf(
@@ -695,6 +721,7 @@ fun BeatPulseScreen(
         micPermissionGranted = granted
     }
     val audioOverlayOpen = tunerOverlayOpen || spectrumOverlayOpen
+    val tuneAudioOpen = appFeatures.isTuneOnly && tunePageIndex != TUNE_SETTINGS_PAGE_INDEX
 
     LaunchedEffect(openSpectrumRequest) {
         if (openSpectrumRequest) {
@@ -703,16 +730,22 @@ fun BeatPulseScreen(
             playlistEditorPopupOpen = false
             playlistRhythmEditorPopupOpen = false
             rhythmEditorPopupOpen = false
-            spectrumOverlayOpen = appFeatures.showSpectrumEntry
+            if (appFeatures.isTuneOnly) {
+                tunePageIndex = TUNE_SPECTRUM_PAGE_INDEX
+            } else {
+                spectrumOverlayOpen = appFeatures.showSpectrumEntry
+            }
             onOpenSpectrumRequestConsumed()
         }
     }
 
     val audioAnalysisState = rememberAudioAnalysisState(
-        enabled = micPermissionGranted && audioOverlayOpen && !isPreview && !appFeatures.isBpmerOnly,
+        enabled = micPermissionGranted && (audioOverlayOpen || tuneAudioOpen) && !isPreview && !appFeatures.isFreeOnly,
         listenProfile = tunerListenProfile,
         a4ReferenceHz = a4ReferenceHz,
-        includeSpectrum = spectrumOverlayOpen,
+        includeSpectrum = spectrumOverlayOpen ||
+            appFeatures.isTuneOnly &&
+            (tunePageIndex == TUNE_TUNER_PAGE_INDEX || tunePageIndex == TUNE_SPECTRUM_PAGE_INDEX),
     )
     val clockImageResId = if (isPreview) {
         R.drawable.clock_dial_all_colors
@@ -795,6 +828,7 @@ fun BeatPulseScreen(
 
     fun shouldShowPagerBigRing(): Boolean {
         return bigRingFlashMode != BigRingFlashMode.Off &&
+            !appFeatures.isTuneOnly &&
             pagerState.currentPage in MAIN_PAGE_INDEX until appFeatures.pageCount &&
             !pagerIsMovingOrBetweenPages() &&
             !pointerIsPreparingGesture() &&
@@ -1234,6 +1268,118 @@ fun BeatPulseScreen(
     }
 
     MaterialTheme(colorScheme = colorScheme) {
+        @Composable
+        fun SimpleSettingsSurface(
+            showBuyNowButton: Boolean,
+            settingsEnabled: Boolean,
+        ) {
+            val effectiveSettingsEnabled = settingsEnabled || freeSettingsTrialState.settingsEnabled
+            SimpleSettingsPage(
+                appText = appText,
+                hapticsEnabled = hapticsEnabled,
+                beepEnabled = beepEnabled,
+                beatSoundMode = beatSoundMode,
+                keepScreenMode = keepScreenMode,
+                mainColorArgb = mainColorArgb,
+                backgroundColorArgb = backgroundColorArgb,
+                ringColorArgb = bigPulseRingColorArgb,
+                bigRingFlashMode = bigRingFlashMode,
+                appLanguage = appLanguage,
+                appCpuUsagePercent = appCpuUsagePercent,
+                showBuyNowButton = showBuyNowButton,
+                settingsEnabled = effectiveSettingsEnabled,
+                trialStatusText = freeSettingsTrialState.statusText,
+                trialButtonText = freeSettingsTrialState.buttonText,
+                trialButtonEnabled = freeSettingsTrialState.buttonEnabled,
+                onStartTrial = {
+                    val startDay = currentEpochDay()
+                    freeSettingsTrialStartedDay = startDay
+                    if (!isPreview) {
+                        context.saveSettingsLong(FREE_SETTINGS_TRIAL_STARTED_DAY_KEY, startDay)
+                    }
+                },
+                onHapticsToggle = {
+                    val nextHapticsEnabled = !hapticsEnabled
+                    val nextState = metronomeState.copy(hapticsEnabled = nextHapticsEnabled)
+                    metronomeState = nextState
+                    if (!isPreview) {
+                        context.saveRhythmState(nextState)
+                    }
+                    metronomeService?.setHapticsEnabled(nextHapticsEnabled)
+                },
+                onBeepToggle = {
+                    val nextBeepEnabled = !beepEnabled
+                    val nextState = metronomeState.copy(beepEnabled = nextBeepEnabled)
+                    metronomeState = nextState
+                    if (!isPreview) {
+                        context.saveRhythmState(nextState)
+                    }
+                    metronomeService?.setBeepEnabled(nextBeepEnabled)
+                },
+                onBeatSoundModeChoice = { mode ->
+                    val nextBeatSoundMode = if (beatSoundMode == mode) {
+                        BeatSoundMode.Clicks
+                    } else {
+                        mode
+                    }
+                    val nextState = metronomeState.copy(
+                        beatSoundMode = nextBeatSoundMode,
+                        beepEnabled = if (nextBeatSoundMode != BeatSoundMode.Clicks) true else beepEnabled,
+                    )
+                    metronomeState = nextState
+                    if (!isPreview) {
+                        context.saveRhythmState(nextState)
+                    }
+                    if (nextState.beepEnabled != beepEnabled) {
+                        metronomeService?.setBeepEnabled(nextState.beepEnabled)
+                    }
+                    metronomeService?.setBeatSoundMode(nextBeatSoundMode)
+                },
+                onKeepScreenModeChoice = { mode ->
+                    keepScreenMode = mode
+                },
+                onMainColorChoice = { colorArgb ->
+                    val nextColorArgb = safeMainColorArgb(
+                        requestedMainColorArgb = colorArgb,
+                        backgroundColorArgb = backgroundColorArgb,
+                    )
+                    mainColorArgb = nextColorArgb
+                    if (!isPreview) {
+                        context.saveSettingsInt(SETTINGS_MAIN_COLOR_KEY, nextColorArgb)
+                    }
+                },
+                onBackgroundColorChoice = { colorArgb ->
+                    val nextColorArgb = safeBackgroundColorArgb(
+                        requestedBackgroundColorArgb = colorArgb,
+                        mainColorArgb = mainColorArgb,
+                    )
+                    backgroundColorArgb = nextColorArgb
+                    if (!isPreview) {
+                        context.saveSettingsInt(SETTINGS_BACKGROUND_COLOR_KEY, nextColorArgb)
+                    }
+                },
+                onRingColorChoice = { colorArgb ->
+                    bigPulseRingColorArgb = colorArgb
+                    if (!isPreview) {
+                        context.saveSettingsInt(SETTINGS_RING_COLOR_KEY, colorArgb)
+                    }
+                },
+                onBigRingModeChoice = { mode ->
+                    bigRingModeState.intValue = mode.persistedValue
+                    if (!isPreview) {
+                        context.saveSettingsInt(SETTINGS_RING_MODE_KEY, mode.persistedValue)
+                    }
+                },
+                onLanguageChoice = { language ->
+                    val nextLanguageIndex = AppLanguages.indexOf(language).coerceAtLeast(0)
+                    appLanguageIndexState.intValue = nextLanguageIndex
+                    if (!isPreview) {
+                        context.saveSettingsInt(SETTINGS_LANGUAGE_INDEX_KEY, nextLanguageIndex)
+                    }
+                },
+            )
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1263,33 +1409,173 @@ fun BeatPulseScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize(),
-            ) { page ->
-                if (appFeatures.isBpmerOnly) {
-                    TapTempoFree(
-                        appText = appText,
-                        bpm = bpm,
-                        musicalKey = currentSong.musicalKey,
-                        beatsPerMeasure = currentSong.beatsPerMeasure,
-                        subdivisionCount = currentSong.subdivisionCount,
-                        beatFlash = beatFlash,
-                        isAccentFlash = flashingBeat == accentBeat,
-                        isRunning = isRunning,
-                        showAudioTools = false,
-                        showRhythmChoices = false,
-                        onOpenTuner = {},
-                        onOpenSpectrum = {},
-                        onTapTempo = recordTapTempo,
-                        onDecrease = decreaseBpm,
-                        onDecreaseLarge = decreaseBpmLarge,
-                        onIncrease = increaseBpm,
-                        onIncreaseLarge = increaseBpmLarge,
-                        onToggleRunning = toggleRunning,
-                        onTimeSignatureClick = {},
-                        onKeyClick = {},
-                    )
+            if (appFeatures.isTuneOnly) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    when (tunePageIndex) {
+                        TUNE_TUNER_PAGE_INDEX -> TunerPage(
+                            appText = appText,
+                            appLanguage = appLanguage,
+                            audioAnalysisState = audioAnalysisState,
+                            a4ReferenceHz = a4ReferenceHz,
+                            selectedProfile = tunerListenProfile,
+                            micPermissionGranted = micPermissionGranted,
+                            showSaveActions = false,
+                            onOpenSpectrum = {
+                                tunePageIndex = TUNE_SPECTRUM_PAGE_INDEX
+                            },
+                            onOpenKey = {
+                                tunePageIndex = TUNE_KEY_PAGE_INDEX
+                            },
+                            onOpenSettings = {
+                                tunePageIndex = TUNE_SETTINGS_PAGE_INDEX
+                            },
+                            onProfileChoice = { tunerListenProfile = it },
+                            onSaveKey = {},
+                            onSaveBpm = {},
+                            onRequestMicPermission = {
+                                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                        )
+
+                        TUNE_SPECTRUM_PAGE_INDEX -> SpectrumAnalyzerPage(
+                            appText = appText,
+                            appLanguage = appLanguage,
+                            audioAnalysisState = audioAnalysisState,
+                            a4ReferenceHz = a4ReferenceHz,
+                            selectedProfile = tunerListenProfile,
+                            micPermissionGranted = micPermissionGranted,
+                            showSaveToClock = false,
+                            onProfileChoice = { tunerListenProfile = it },
+                            onSaveToClock = { _, _ -> },
+                            onRequestMicPermission = {
+                                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                        )
+
+                        TUNE_KEY_PAGE_INDEX -> TuneKeyPage(
+                            appText = appText,
+                            audioAnalysisState = audioAnalysisState,
+                            micPermissionGranted = micPermissionGranted,
+                            showSaveKey = false,
+                            onSaveKey = {},
+                            onRequestMicPermission = {
+                                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                        )
+
+                        TUNE_SETTINGS_PAGE_INDEX -> TuneSettingsPage(
+                            appText = appText,
+                            a4ReferenceHz = a4ReferenceHz,
+                            mainColorArgb = mainColorArgb,
+                            backgroundColorArgb = backgroundColorArgb,
+                            appLanguage = appLanguage,
+                            appCpuUsagePercent = appCpuUsagePercent,
+                            keepScreenMode = keepScreenMode,
+                            showBuyNowButton = true,
+                            settingsEnabled = freeSettingsTrialState.settingsEnabled,
+                            trialStatusText = freeSettingsTrialState.statusText,
+                            trialButtonText = freeSettingsTrialState.buttonText,
+                            trialButtonEnabled = freeSettingsTrialState.buttonEnabled,
+                            onStartTrial = {
+                                val startDay = currentEpochDay()
+                                freeSettingsTrialStartedDay = startDay
+                                if (!isPreview) {
+                                    context.saveSettingsLong(FREE_SETTINGS_TRIAL_STARTED_DAY_KEY, startDay)
+                                }
+                            },
+                            onA4ReferenceHzChange = { referenceHz ->
+                                val nextReferenceHz = referenceHz.coerceIn(MIN_A4_REFERENCE_HZ, MAX_A4_REFERENCE_HZ)
+                                a4ReferenceHz = nextReferenceHz
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_A4_REFERENCE_HZ_KEY, nextReferenceHz)
+                                }
+                            },
+                            onKeepScreenModeChoice = { mode ->
+                                keepScreenMode = mode
+                            },
+                            onMainColorChoice = { colorArgb ->
+                                val nextColorArgb = safeMainColorArgb(
+                                    requestedMainColorArgb = colorArgb,
+                                    backgroundColorArgb = backgroundColorArgb,
+                                )
+                                mainColorArgb = nextColorArgb
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_MAIN_COLOR_KEY, nextColorArgb)
+                                }
+                            },
+                            onBackgroundColorChoice = { colorArgb ->
+                                val nextColorArgb = safeBackgroundColorArgb(
+                                    requestedBackgroundColorArgb = colorArgb,
+                                    mainColorArgb = mainColorArgb,
+                                )
+                                backgroundColorArgb = nextColorArgb
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_BACKGROUND_COLOR_KEY, nextColorArgb)
+                                }
+                            },
+                            onLanguageChoice = { language ->
+                                val nextLanguageIndex = AppLanguages.indexOf(language).coerceAtLeast(0)
+                                appLanguageIndexState.intValue = nextLanguageIndex
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_LANGUAGE_INDEX_KEY, nextLanguageIndex)
+                                }
+                            },
+                        )
+                    }
+
+                    if (tunePageIndex != TUNE_TUNER_PAGE_INDEX) {
+                        TunerProfileButton(
+                            text = appText.done,
+                            selected = false,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 24.dp, end = 12.dp)
+                                .rotate(38f)
+                                .width(58.dp)
+                                .height(24.dp),
+                            fontSize = 9.sp,
+                            onClick = {
+                                tunePageIndex = TUNE_TUNER_PAGE_INDEX
+                            },
+                        )
+                    }
+                }
+            } else {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                ) { page ->
+
+                if (appFeatures.isFreeOnly) {
+                    when (page) {
+                        FREE_TAP_PAGE_INDEX -> TapTempoFree(
+                            appText = appText,
+                            bpm = bpm,
+                            musicalKey = currentSong.musicalKey,
+                            beatsPerMeasure = currentSong.beatsPerMeasure,
+                            subdivisionCount = currentSong.subdivisionCount,
+                            beatFlash = beatFlash,
+                            isAccentFlash = flashingBeat == accentBeat,
+                            isRunning = isRunning,
+                            showAudioTools = false,
+                            showRhythmChoices = false,
+                            onOpenTuner = {},
+                            onOpenSpectrum = {},
+                            onTapTempo = recordTapTempo,
+                            onDecrease = decreaseBpm,
+                            onDecreaseLarge = decreaseBpmLarge,
+                            onIncrease = increaseBpm,
+                            onIncreaseLarge = increaseBpmLarge,
+                            onToggleRunning = toggleRunning,
+                            onTimeSignatureClick = {},
+                            onKeyClick = {},
+                        )
+
+                        FREE_SETTINGS_PAGE_INDEX -> SimpleSettingsSurface(
+                            showBuyNowButton = true,
+                            settingsEnabled = false,
+                        )
+                    }
                     return@HorizontalPager
                 }
 
@@ -1548,6 +1834,7 @@ fun BeatPulseScreen(
                         },
                     )
                 }
+                }
             }
 
             CpuPercentOverlay(
@@ -1556,13 +1843,17 @@ fun BeatPulseScreen(
             )
 
             if (
-                appFeatures.pageCount > 1 &&
-                !audioOverlayOpen &&
-                pagerState.currentPage != MAIN_PAGE_INDEX &&
-                pagerState.currentPage != RHYTHM_PAGE_INDEX
+                    appFeatures.pageCount > 1 &&
+                    !audioOverlayOpen &&
+                    (
+                    appFeatures.isFreeOnly ||
+                        pagerState.currentPage != MAIN_PAGE_INDEX &&
+                        pagerState.currentPage != RHYTHM_PAGE_INDEX
+                    )
             ) {
                 PulsePagerIndicator(
                     currentPage = pagerState.currentPage,
+                    pageCount = appFeatures.pageCount,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 8.dp),
@@ -1875,8 +2166,20 @@ fun BeatPulseScreen(
                         appText = appText,
                         appLanguage = appLanguage,
                         audioAnalysisState = audioAnalysisState,
+                        a4ReferenceHz = a4ReferenceHz,
                         selectedProfile = tunerListenProfile,
                         micPermissionGranted = micPermissionGranted,
+                        onOpenSpectrum = {
+                            tunerOverlayOpen = false
+                            spectrumOverlayOpen = true
+                        },
+                        onOpenKey = {},
+                        onOpenSettings = {
+                            tunerOverlayOpen = false
+                            pagerScope.launch {
+                                pagerState.scrollToPage(SETTINGS_PAGE_INDEX)
+                            }
+                        },
                         onProfileChoice = { tunerListenProfile = it },
                         onSaveKey = { guessedKey ->
                             updateCurrentSong { song -> song.copy(musicalKey = guessedKey) }
@@ -1903,6 +2206,7 @@ fun BeatPulseScreen(
                         a4ReferenceHz = a4ReferenceHz,
                         selectedProfile = tunerListenProfile,
                         micPermissionGranted = micPermissionGranted,
+                        onProfileChoice = { tunerListenProfile = it },
                         onSaveToClock = { detectedBpm, guessedKey ->
                             if (!isPreview) {
                                 context.saveLatestMusicReading(detectedBpm, guessedKey)
@@ -2155,6 +2459,61 @@ internal fun Int.wrap(size: Int): Int {
     return ((this % size) + size) % size
 }
 
+private data class FreeSettingsTrialState(
+    val settingsEnabled: Boolean,
+    val buttonEnabled: Boolean,
+    val buttonText: String,
+    val statusText: String,
+)
+
+private fun currentEpochDay(): Long {
+    return LocalDate.now().toEpochDay()
+}
+
+private fun freeSettingsTrialState(
+    trialStartedDay: Long,
+    todayEpochDay: Long,
+): FreeSettingsTrialState {
+    if (trialStartedDay <= 0L) {
+        return FreeSettingsTrialState(
+            settingsEnabled = false,
+            buttonEnabled = true,
+            buttonText = "30 Day Trial",
+            statusText = "Settings locked",
+        )
+    }
+
+    val daysSinceStart = (todayEpochDay - trialStartedDay).coerceAtLeast(0L)
+    if (daysSinceStart < FREE_SETTINGS_TRIAL_DURATION_DAYS) {
+        val daysLeft = FREE_SETTINGS_TRIAL_DURATION_DAYS - daysSinceStart
+        return FreeSettingsTrialState(
+            settingsEnabled = true,
+            buttonEnabled = false,
+            buttonText = "$daysLeft days left",
+            statusText = "Trial active: $daysLeft days left",
+        )
+    }
+
+    if (daysSinceStart < FREE_SETTINGS_TRIAL_RESET_DAYS) {
+        val cooldownDay = (daysSinceStart - FREE_SETTINGS_TRIAL_DURATION_DAYS + 1)
+            .coerceIn(1L, FREE_SETTINGS_TRIAL_COOLDOWN_DAYS.toLong())
+        val daysUntilAvailable = FREE_SETTINGS_TRIAL_RESET_DAYS - daysSinceStart
+        return FreeSettingsTrialState(
+            settingsEnabled = false,
+            buttonEnabled = false,
+            buttonText = "Again in ${daysUntilAvailable}d",
+            statusText = "Cooldown day $cooldownDay of $FREE_SETTINGS_TRIAL_COOLDOWN_DAYS",
+        )
+    }
+
+    return FreeSettingsTrialState(
+        settingsEnabled = false,
+        buttonEnabled = true,
+        buttonText = "30 Day Trial",
+        statusText = "Trial ready again",
+    )
+}
+
 private fun Context.loadKeepScreenMode(): KeepScreenMode {
     val preferences = getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
     if (preferences.contains(KEEP_SCREEN_MODE_KEY)) {
@@ -2191,6 +2550,24 @@ private fun Context.saveSettingsInt(
     getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
         .edit {
             putInt(key, value)
+        }
+}
+
+private fun Context.loadSettingsLong(
+    key: String,
+    defaultValue: Long,
+): Long {
+    return getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+        .getLong(key, defaultValue)
+}
+
+private fun Context.saveSettingsLong(
+    key: String,
+    value: Long,
+) {
+    getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+        .edit {
+            putLong(key, value)
         }
 }
 

@@ -1,4 +1,4 @@
-package bpm.munkz.pulse_wear.os.metronome.presentation
+package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import android.graphics.Paint
 import androidx.compose.foundation.Canvas
@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -46,6 +48,8 @@ fun SpectrumAnalyzerPage(
     a4ReferenceHz: Int,
     selectedProfile: TunerListenProfile,
     micPermissionGranted: Boolean,
+    showSaveToClock: Boolean = true,
+    onProfileChoice: (TunerListenProfile) -> Unit,
     onSaveToClock: (Int, String) -> Unit,
     onRequestMicPermission: () -> Unit,
 ) {
@@ -64,11 +68,11 @@ fun SpectrumAnalyzerPage(
         val watchSClass = minOf(maxWidth, maxHeight) <= 200.dp
         val titleFontSize = if (watchSClass) 14.sp else 16.sp
         val keyFontSize = if (watchSClass) 9.sp else 10.sp
-        val rangeFontSize = if (watchSClass) 7.sp else 8.sp
         val graphWidth = if (watchSClass) 160.dp else 176.dp
         val graphHeight = if (watchSClass) 96.dp else 110.dp
-        val peakFontSize = if (watchSClass) 10.sp else 12.sp
-        val graphBottomSpacing = if (watchSClass) 3.dp else 4.dp
+        val profileButtonWidth = if (watchSClass) 32.dp else 36.dp
+        val profileButtonHeight = if (watchSClass) 21.dp else 23.dp
+        val profileButtonFontSize = if (watchSClass) 7.sp else 8.sp
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -97,14 +101,6 @@ fun SpectrumAnalyzerPage(
                 maxLines = 1,
             )
 
-            Text(
-                text = "${selectedProfile.constraintLabelFor(appLanguage)} ${selectedProfile.frequencyRangeLabel()}",
-                fontSize = rangeFontSize,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-            )
-
             if (!micPermissionGranted) {
                 MicPermissionButton(appText = appText, onClick = onRequestMicPermission)
             } else {
@@ -116,22 +112,35 @@ fun SpectrumAnalyzerPage(
                         .width(graphWidth)
                         .height(graphHeight),
                 )
+            }
+        }
 
-                Spacer(modifier = Modifier.height(graphBottomSpacing))
-
-                Text(
-                    text = peakReading?.let { peak ->
-                        val noteName = peak.frequencyHz.toNoteReading(a4ReferenceHz).first
-                        "${peak.frequencyHz.roundToInt()} Hz  $noteName  ${peak.bandLabel}"
-                    } ?: "-- Hz",
-                    fontSize = peakFontSize,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
-                    textAlign = TextAlign.Center,
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(
+                    start = if (watchSClass) 8.dp else 10.dp,
+                    end = if (watchSClass) 8.dp else 10.dp,
+                    bottom = 4.dp,
+                ),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SpectrumTunerListenProfiles.forEach { profile ->
+                TunerProfileButton(
+                    text = profile.labelFor(appLanguage),
+                    selected = selectedProfile == profile,
+                    modifier = Modifier
+                        .width(profileButtonWidth)
+                        .height(profileButtonHeight),
+                    fontSize = profileButtonFontSize,
+                    onClick = { onProfileChoice(profile) },
                 )
             }
         }
 
-        if (detectedBpm != null && guessedKey != null) {
+        if (showSaveToClock && detectedBpm != null && guessedKey != null) {
             ArchedTopStartButton(
                 text = appText.toClock,
                 modifier = Modifier.align(Alignment.TopStart),

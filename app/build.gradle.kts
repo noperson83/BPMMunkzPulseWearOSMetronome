@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "bpm.munkz.pulse_wear.os.metronome"
+    namespace = "bpm.munkz.pulse_wear.os.bpm"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -12,12 +12,33 @@ android {
     }
 
     defaultConfig {
-        applicationId = "bpm.munkz.pulse_wear.os.metronome"
         minSdk = 33
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0-free"
+        versionName = "1.0"
 
+    }
+
+    flavorDimensions += "edition"
+    productFlavors {
+        create("bpm") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse_wear.os.bpm"
+            versionNameSuffix = "-bpm"
+            buildConfigField("String", "APP_EDITION", "\"bpm\"")
+        }
+        create("tune") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse_wear.os.tune"
+            versionNameSuffix = "-tune"
+            buildConfigField("String", "APP_EDITION", "\"tune\"")
+        }
+        create("pro") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse_wear.os.pro"
+            versionNameSuffix = "-pro"
+            buildConfigField("String", "APP_EDITION", "\"pro\"")
+        }
     }
 
     buildTypes {
@@ -36,6 +57,7 @@ android {
     useLibrary("wear-sdk")
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     buildToolsVersion = "36.0.0"
 }
