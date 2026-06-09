@@ -101,6 +101,8 @@ private const val TAP_TEMPO_FREE_PAGE_INDEX = 2
 private const val SETTINGS_PAGE_INDEX = 3
 private const val FREE_TAP_PAGE_INDEX = 0
 private const val FREE_SETTINGS_PAGE_INDEX = 1
+private const val RHYTHM_APP_RHYTHM_PAGE_INDEX = 0
+private const val RHYTHM_APP_SETTINGS_PAGE_INDEX = 1
 private const val TUNE_TUNER_PAGE_INDEX = 0
 private const val TUNE_SPECTRUM_PAGE_INDEX = 1
 private const val TUNE_KEY_PAGE_INDEX = 2
@@ -524,7 +526,7 @@ private fun AppLaunchSplashScreen() {
         contentAlignment = Alignment.Center,
     ) {
         Image(
-            painter = painterResource(id = R.drawable.bpm_munkz_app_logo_free),
+            painter = painterResource(id = R.drawable.bpm_munkz_app_logo_metronome),
             contentDescription = "BPM Munkz Pulse",
             contentScale = ContentScale.Fit,
             modifier = Modifier
@@ -676,12 +678,18 @@ fun BeatPulseScreen(
     var playlistEditorPopupOpen by rememberSaveable { mutableStateOf(false) }
     var playlistRhythmEditorPopupOpen by rememberSaveable { mutableStateOf(false) }
     var rhythmEditorPopupOpen by rememberSaveable { mutableStateOf(false) }
+    var rhythmEditorDraft by remember { mutableStateOf<MetronomeState?>(null) }
     var tapTempoPopupOpen by rememberSaveable { mutableStateOf(false) }
     var freeTapKeyPickerOpen by rememberSaveable { mutableStateOf(false) }
     var freeTapTimeSignaturePickerOpen by rememberSaveable { mutableStateOf(false) }
     var tunerOverlayOpen by rememberSaveable { mutableStateOf(false) }
     var spectrumOverlayOpen by rememberSaveable { mutableStateOf(false) }
+    var keyOverlayOpen by rememberSaveable { mutableStateOf(false) }
+    var bpmReaderOverlayOpen by rememberSaveable { mutableStateOf(false) }
+    var fftOverlayOpen by rememberSaveable { mutableStateOf(false) }
     var tunerListenProfile by rememberSaveable { mutableStateOf(TunerListenProfile.Full) }
+    var spectrumReaderMode by rememberSaveable { mutableStateOf(SpectrumReaderMode.Instrument) }
+    var spectrumTuningChoice by rememberSaveable { mutableStateOf<SpectrumTuningChoice?>(null) }
     val tapTempoTimes = remember { mutableListOf<Long>() }
     val appFeatures = AppEditionConfig.features
     val pagerState = rememberPagerState(pageCount = { appFeatures.pageCount })
@@ -720,13 +728,16 @@ fun BeatPulseScreen(
     ) { granted ->
         micPermissionGranted = granted
     }
-    val audioOverlayOpen = tunerOverlayOpen || spectrumOverlayOpen
+    val audioOverlayOpen = tunerOverlayOpen || spectrumOverlayOpen || keyOverlayOpen || bpmReaderOverlayOpen || fftOverlayOpen
     val tuneAudioOpen = appFeatures.isTuneOnly && tunePageIndex != TUNE_SETTINGS_PAGE_INDEX
 
     LaunchedEffect(openSpectrumRequest) {
         if (openSpectrumRequest) {
             tapTempoPopupOpen = false
             tunerOverlayOpen = false
+            bpmReaderOverlayOpen = false
+            fftOverlayOpen = false
+            keyOverlayOpen = false
             playlistEditorPopupOpen = false
             playlistRhythmEditorPopupOpen = false
             rhythmEditorPopupOpen = false
@@ -742,8 +753,10 @@ fun BeatPulseScreen(
     val audioAnalysisState = rememberAudioAnalysisState(
         enabled = micPermissionGranted && (audioOverlayOpen || tuneAudioOpen) && !isPreview && !appFeatures.isFreeOnly,
         listenProfile = tunerListenProfile,
+        readerMode = spectrumReaderMode,
+        tuningChoice = spectrumTuningChoice,
         a4ReferenceHz = a4ReferenceHz,
-        includeSpectrum = spectrumOverlayOpen ||
+        includeSpectrum = spectrumOverlayOpen || fftOverlayOpen ||
             appFeatures.isTuneOnly &&
             (tunePageIndex == TUNE_TUNER_PAGE_INDEX || tunePageIndex == TUNE_SPECTRUM_PAGE_INDEX),
     )
@@ -826,6 +839,14 @@ fun BeatPulseScreen(
             SystemClock.elapsedRealtime() < quietPulseVisualsUntilMs
     }
 
+    fun pageShowsRhythmPulse(page: Int): Boolean {
+        return if (appFeatures.isRhythmOnly) {
+            page == RHYTHM_APP_RHYTHM_PAGE_INDEX
+        } else {
+            page == RHYTHM_PAGE_INDEX
+        }
+    }
+
     fun shouldShowPagerBigRing(): Boolean {
         return bigRingFlashMode != BigRingFlashMode.Off &&
             !appFeatures.isTuneOnly &&
@@ -860,7 +881,7 @@ fun BeatPulseScreen(
                 tapTempoPopupOpen ||
                     playlistRhythmEditorPopupOpen ||
                     rhythmEditorPopupOpen ||
-                    currentPage == RHYTHM_PAGE_INDEX ||
+                    pageShowsRhythmPulse(currentPage) ||
                     currentPage == TAP_TEMPO_FREE_PAGE_INDEX
                 )
         val shouldShowLightClockPulse = !playlistEditorPopupOpen &&
@@ -886,6 +907,7 @@ fun BeatPulseScreen(
         audioOverlayOpen,
         tunerOverlayOpen,
         spectrumOverlayOpen,
+        bpmReaderOverlayOpen,
         bigRingFlashMode,
     ) {
         metronomeService?.state?.collect { state ->
@@ -914,6 +936,7 @@ fun BeatPulseScreen(
         audioOverlayOpen,
         tunerOverlayOpen,
         spectrumOverlayOpen,
+        bpmReaderOverlayOpen,
         bigRingFlashMode,
     ) {
         snapshotFlow {
@@ -1049,6 +1072,126 @@ fun BeatPulseScreen(
         )
     }
 
+    fun setCurrentSongRhythmPreset(
+        beatsPerMeasureChoice: Int,
+        beatAccentTypeChoices: List<BeatAccentType>,
+        subdivisionChoice: Int,
+    ) {
+        val nextBeatsPerMeasure = beatsPerMeasureChoice.coerceIn(2, 16)
+        val nextBeatAccentTypes = beatAccentTypeChoices.take(nextBeatsPerMeasure)
+        val nextSubdivisionCount = subdivisionChoice.toSupportedPulseSubdivisionCount()
+        val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
+            song.copy(
+                beatsPerMeasure = nextBeatsPerMeasure,
+                accentBeat = 1,
+                subdivisionCount = nextSubdivisionCount,
+                beatAccentTypes = nextBeatAccentTypes,
+            )
+        }
+        playlists = nextPlaylists
+        if (!isPreview) {
+            context.saveSavedPlaylists(nextPlaylists)
+        }
+        metronomeService?.setPlaylistItem(
+            playlistIndex = playlistIndex,
+            songIndex = songIndex,
+            bpm = currentSong.bpm,
+            beatsPerMeasure = nextBeatsPerMeasure,
+            accentBeat = 1,
+            subdivisionCount = nextSubdivisionCount,
+            beatAccentTypes = nextBeatAccentTypes,
+            accentIntensityMode = currentSong.accentIntensityMode,
+            musicalKey = currentSong.musicalKey,
+            restartBeat = isRunning,
+        )
+    }
+
+    fun applyRhythmOnlyState(
+        nextState: MetronomeState,
+        restartBeat: Boolean,
+    ) {
+        metronomeState = nextState
+        if (!isPreview) {
+            context.saveRhythmState(nextState)
+        }
+        metronomeService?.setPlaylistItem(
+            playlistIndex = nextState.playlistIndex,
+            songIndex = nextState.songIndex,
+            bpm = nextState.bpm,
+            beatsPerMeasure = nextState.beatsPerMeasure,
+            accentBeat = nextState.accentBeat,
+            subdivisionCount = nextState.subdivisionCount,
+            beatAccentTypes = nextState.beatAccentTypes,
+            accentIntensityMode = nextState.accentIntensityMode,
+            accentIntensityRanges = nextState.accentIntensityRanges,
+            musicalKey = nextState.musicalKey,
+            tempoNudgeMs = nextState.tempoNudgeMs,
+            restartBeat = restartBeat,
+        )
+    }
+
+    fun setRhythmOnlyPreset(
+        beatsPerMeasureChoice: Int,
+        beatAccentTypeChoices: List<BeatAccentType>,
+        subdivisionChoice: Int,
+    ) {
+        val nextBeatsPerMeasure = beatsPerMeasureChoice.coerceIn(2, 16)
+        val nextBeatAccentTypes = beatAccentTypeChoices.take(nextBeatsPerMeasure)
+        val nextSubdivisionCount = subdivisionChoice.toSupportedPulseSubdivisionCount()
+        applyRhythmOnlyState(
+            metronomeState.copy(
+                beatsPerMeasure = nextBeatsPerMeasure,
+                accentBeat = nextBeatAccentTypes.primaryRhythmAccentBeat(),
+                subdivisionCount = nextSubdivisionCount,
+                beatAccentTypes = nextBeatAccentTypes,
+            ),
+            restartBeat = isRunning,
+        )
+    }
+
+    fun updateRhythmEditorDraft(update: (MetronomeState) -> MetronomeState) {
+        rhythmEditorDraft = update(rhythmEditorDraft ?: metronomeState)
+    }
+
+    fun startRhythmEditor() {
+        if (appFeatures.isRhythmOnly) {
+            rhythmEditorDraft = metronomeState
+        }
+        rhythmEditorPopupOpen = true
+    }
+
+    fun cancelRhythmEditorAndClose() {
+        rhythmEditorDraft = null
+        rhythmEditorPopupOpen = false
+    }
+
+    fun commitRhythmEditorAndClose() {
+        if (appFeatures.isRhythmOnly) {
+            rhythmEditorDraft?.let { draft ->
+                applyRhythmOnlyState(draft, restartBeat = isRunning)
+            }
+            rhythmEditorDraft = null
+            rhythmEditorPopupOpen = false
+        } else {
+            val rhythmState = metronomeService?.state?.value ?: metronomeState
+            val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
+                song.copy(
+                    bpm = rhythmState.bpm,
+                    beatsPerMeasure = rhythmState.beatsPerMeasure,
+                    accentBeat = rhythmState.accentBeat,
+                    subdivisionCount = rhythmState.subdivisionCount,
+                    beatAccentTypes = rhythmState.beatAccentTypes,
+                    accentIntensityMode = rhythmState.accentIntensityMode,
+                )
+            }
+            playlists = nextPlaylists
+            if (!isPreview) {
+                context.saveSavedPlaylists(nextPlaylists)
+            }
+            rhythmEditorPopupOpen = false
+        }
+    }
+
     fun setCurrentSongKey(key: String) {
         val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
             song.copy(musicalKey = key)
@@ -1072,6 +1215,9 @@ fun BeatPulseScreen(
     }
 
     fun saveCurrentRhythmToSong() {
+        if (appFeatures.isRhythmOnly) {
+            return
+        }
         val rhythmState = metronomeService?.state?.value ?: metronomeState
         val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
             song.copy(
@@ -1240,7 +1386,7 @@ fun BeatPulseScreen(
         playlistIndex,
         songIndex,
     ) {
-        if (pagerState.currentPage == MAIN_PAGE_INDEX && !isRunning) {
+        if (!appFeatures.isRhythmOnly && pagerState.currentPage == MAIN_PAGE_INDEX && !isRunning) {
             applySongToMetronome(playlistIndex, songIndex, currentSong, restartBeat = false)
         }
     }
@@ -1279,6 +1425,10 @@ fun BeatPulseScreen(
                 hapticsEnabled = hapticsEnabled,
                 beepEnabled = beepEnabled,
                 beatSoundMode = beatSoundMode,
+                beatsPerMeasure = if (appFeatures.isRhythmOnly) null else currentSong.beatsPerMeasure,
+                beatAccentTypes = if (appFeatures.isRhythmOnly) null else currentSong.beatAccentTypes,
+                accentIntensityMode = if (appFeatures.isRhythmOnly) accentIntensityMode else null,
+                accentIntensityRanges = if (appFeatures.isRhythmOnly) metronomeState.accentIntensityRanges else null,
                 keepScreenMode = keepScreenMode,
                 mainColorArgb = mainColorArgb,
                 backgroundColorArgb = backgroundColorArgb,
@@ -1334,6 +1484,33 @@ fun BeatPulseScreen(
                         metronomeService?.setBeepEnabled(nextState.beepEnabled)
                     }
                     metronomeService?.setBeatSoundMode(nextBeatSoundMode)
+                },
+                onRhythmPresetChoice = { nextBeatsPerMeasure, nextBeatAccentTypes, nextSubdivisionCount ->
+                    if (appFeatures.isRhythmOnly) {
+                        setRhythmOnlyPreset(
+                            nextBeatsPerMeasure,
+                            nextBeatAccentTypes,
+                            nextSubdivisionCount,
+                        )
+                    } else {
+                        setCurrentSongRhythmPreset(
+                            nextBeatsPerMeasure,
+                            nextBeatAccentTypes,
+                            nextSubdivisionCount,
+                        )
+                    }
+                },
+                onAccentIntensityModeChoice = { mode ->
+                    applyRhythmOnlyState(
+                        metronomeState.copy(accentIntensityMode = mode),
+                        restartBeat = false,
+                    )
+                },
+                onAccentIntensityRangesChange = { ranges ->
+                    applyRhythmOnlyState(
+                        metronomeState.copy(accentIntensityRanges = ranges),
+                        restartBeat = false,
+                    )
                 },
                 onKeepScreenModeChoice = { mode ->
                     keepScreenMode = mode
@@ -1423,6 +1600,9 @@ fun BeatPulseScreen(
                             onOpenSpectrum = {
                                 tunePageIndex = TUNE_SPECTRUM_PAGE_INDEX
                             },
+                            onOpenBpmReader = {
+                                bpmReaderOverlayOpen = true
+                            },
                             onOpenKey = {
                                 tunePageIndex = TUNE_KEY_PAGE_INDEX
                             },
@@ -1443,10 +1623,19 @@ fun BeatPulseScreen(
                             audioAnalysisState = audioAnalysisState,
                             a4ReferenceHz = a4ReferenceHz,
                             selectedProfile = tunerListenProfile,
+                            selectedReaderMode = spectrumReaderMode,
+                            selectedTuningChoice = spectrumTuningChoice,
                             micPermissionGranted = micPermissionGranted,
                             showSaveToClock = false,
-                            onProfileChoice = { tunerListenProfile = it },
+                            onSpectrumSettingsSaved = { readerMode, profile, tuningChoice ->
+                                spectrumReaderMode = readerMode
+                                tunerListenProfile = profile
+                                spectrumTuningChoice = tuningChoice?.takeIf { it.profile == profile }
+                            },
                             onSaveToClock = { _, _ -> },
+                            onOpenFft = {
+                                fftOverlayOpen = true
+                            },
                             onRequestMicPermission = {
                                 micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                             },
@@ -1559,6 +1748,7 @@ fun BeatPulseScreen(
                             isRunning = isRunning,
                             showAudioTools = false,
                             showRhythmChoices = false,
+                            showTimeSignatureReadout = true,
                             onOpenTuner = {},
                             onOpenSpectrum = {},
                             onTapTempo = recordTapTempo,
@@ -1574,6 +1764,209 @@ fun BeatPulseScreen(
                         FREE_SETTINGS_PAGE_INDEX -> SimpleSettingsSurface(
                             showBuyNowButton = true,
                             settingsEnabled = false,
+                        )
+                    }
+                    return@HorizontalPager
+                }
+
+                if (appFeatures.isRhythmOnly) {
+                    when (page) {
+                        RHYTHM_APP_RHYTHM_PAGE_INDEX -> RhythmSetupPage(
+                            appText = appText,
+                            bpm = bpm,
+                            beatsPerMeasure = beatsPerMeasure,
+                            subdivisionCount = subdivisionCount,
+                            beatAccentTypes = beatAccentTypes,
+                            currentBeatIndex = currentBeatIndex,
+                            currentSubdivisionIndex = currentSubdivisionIndex,
+                            beatFlash = beatFlash,
+                            isRunning = isRunning,
+                            beatClockStartedAtMs = beatClockStartedAtMs,
+                            tempoNudgeMs = tempoNudgeMs,
+                            playbackStartedAtMs = playbackStartedAtMs,
+                            beatVisualsEnabled = pageShowsRhythmPulse(pagerState.currentPage) &&
+                                !pagerState.isScrollInProgress &&
+                                abs(pagerState.currentPageOffsetFraction) <= 0.01f,
+                            beatRingVisible = pageShowsRhythmPulse(pagerState.currentPage) &&
+                                !pagerState.isScrollInProgress &&
+                                abs(pagerState.currentPageOffsetFraction) <= 0.01f,
+                            showAudioTools = false,
+                            onEditRhythm = { startRhythmEditor() },
+                            onToggleRunning = toggleRunning,
+                            onBpmClick = {
+                                tapTempoPopupOpen = true
+                            },
+                            onTempoNudge = { step ->
+                                metronomeService?.pushTempoPhase(step)
+                            },
+                            onOpenTuner = {},
+                            onOpenSpectrum = {},
+                        )
+
+                        RHYTHM_APP_SETTINGS_PAGE_INDEX -> SimpleSettingsSurface(
+                            showBuyNowButton = true,
+                            settingsEnabled = freeSettingsTrialState.settingsEnabled,
+                        )
+                    }
+                    return@HorizontalPager
+                }
+
+                if (appFeatures.isPlaylistOnly) {
+                    when (page) {
+                        MAIN_PAGE_INDEX -> PlaylistClockPage(
+                            appText = appText,
+                            playlist = currentPlaylist,
+                            songIndex = songIndex,
+                            isRunning = isRunning,
+                            beatClockStartedAtMs = beatClockStartedAtMs,
+                            playbackStartedAtMs = playbackStartedAtMs,
+                            clockImageResId = clockImageResId,
+                            clockColorArgb = clockColorArgb,
+                            forceSimpleRhythm = false,
+                            onPreviousSong = { selectSong(songIndex - 1) },
+                            onNextSong = { selectSong(songIndex + 1) },
+                            onEditPlaylist = {
+                                playlistEditorPopupOpen = true
+                            },
+                            onToggleRunning = toggleRunning,
+                        )
+
+                        FREE_SETTINGS_PAGE_INDEX -> PlaylistSettingsPage(
+                            appText = appText,
+                            hapticsEnabled = hapticsEnabled,
+                            beepEnabled = beepEnabled,
+                            beatSoundMode = beatSoundMode,
+                            keyDroneEnabled = keyDroneEnabled,
+                            keyDroneVolumePercent = keyDroneVolumePercent,
+                            a4ReferenceHz = a4ReferenceHz,
+                            keepScreenMode = keepScreenMode,
+                            mainColorArgb = mainColorArgb,
+                            backgroundColorArgb = backgroundColorArgb,
+                            clockColorArgb = clockColorArgb,
+                            clockImageIndex = selectedClockImageIndex,
+                            appLanguage = appLanguage,
+                            appCpuUsagePercent = appCpuUsagePercent,
+                            showBuyNowButton = true,
+                            settingsEnabled = freeSettingsTrialState.settingsEnabled,
+                            trialStatusText = freeSettingsTrialState.statusText,
+                            trialButtonText = freeSettingsTrialState.buttonText,
+                            trialButtonEnabled = freeSettingsTrialState.buttonEnabled,
+                            onStartTrial = {
+                                val startDay = currentEpochDay()
+                                freeSettingsTrialStartedDay = startDay
+                                if (!isPreview) {
+                                    context.saveSettingsLong(FREE_SETTINGS_TRIAL_STARTED_DAY_KEY, startDay)
+                                }
+                            },
+                            onHapticsToggle = {
+                                val nextHapticsEnabled = !hapticsEnabled
+                                val nextState = metronomeState.copy(hapticsEnabled = nextHapticsEnabled)
+                                metronomeState = nextState
+                                if (!isPreview) {
+                                    context.saveRhythmState(nextState)
+                                }
+                                metronomeService?.setHapticsEnabled(nextHapticsEnabled)
+                            },
+                            onBeepToggle = {
+                                val nextBeepEnabled = !beepEnabled
+                                val nextState = metronomeState.copy(beepEnabled = nextBeepEnabled)
+                                metronomeState = nextState
+                                if (!isPreview) {
+                                    context.saveRhythmState(nextState)
+                                }
+                                metronomeService?.setBeepEnabled(nextBeepEnabled)
+                            },
+                            onBeatSoundModeChoice = { mode ->
+                                val nextBeatSoundMode = if (beatSoundMode == mode) {
+                                    BeatSoundMode.Clicks
+                                } else {
+                                    mode
+                                }
+                                val nextState = metronomeState.copy(
+                                    beatSoundMode = nextBeatSoundMode,
+                                    beepEnabled = if (nextBeatSoundMode != BeatSoundMode.Clicks) true else beepEnabled,
+                                )
+                                metronomeState = nextState
+                                if (!isPreview) {
+                                    context.saveRhythmState(nextState)
+                                }
+                                if (nextState.beepEnabled != beepEnabled) {
+                                    metronomeService?.setBeepEnabled(nextState.beepEnabled)
+                                }
+                                metronomeService?.setBeatSoundMode(nextBeatSoundMode)
+                            },
+                            onKeyDroneToggle = {
+                                val nextKeyDroneEnabled = !keyDroneEnabled
+                                val nextState = metronomeState.copy(
+                                    keyDroneEnabled = nextKeyDroneEnabled,
+                                    musicalKey = currentSong.musicalKey,
+                                )
+                                metronomeState = nextState
+                                if (!isPreview) {
+                                    context.saveRhythmState(nextState)
+                                }
+                                metronomeService?.setKeyDroneEnabled(nextKeyDroneEnabled)
+                            },
+                            onKeyDroneVolumeChange = { step ->
+                                val nextVolume = (keyDroneVolumePercent + step).coerceIn(0, 100)
+                                val nextState = metronomeState.copy(keyDroneVolumePercent = nextVolume)
+                                metronomeState = nextState
+                                if (!isPreview) {
+                                    context.saveRhythmState(nextState)
+                                }
+                                metronomeService?.setKeyDroneVolumePercent(nextVolume)
+                            },
+                            onA4ReferenceHzChange = { referenceHz ->
+                                val nextReferenceHz = referenceHz
+                                    .coerceIn(MIN_A4_REFERENCE_HZ, MAX_A4_REFERENCE_HZ)
+                                a4ReferenceHz = nextReferenceHz
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_A4_REFERENCE_HZ_KEY, nextReferenceHz)
+                                }
+                            },
+                            onKeepScreenModeChoice = { mode ->
+                                keepScreenMode = mode
+                            },
+                            onMainColorChoice = { colorArgb ->
+                                val nextColorArgb = safeMainColorArgb(
+                                    requestedMainColorArgb = colorArgb,
+                                    backgroundColorArgb = backgroundColorArgb,
+                                )
+                                mainColorArgb = nextColorArgb
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_MAIN_COLOR_KEY, nextColorArgb)
+                                }
+                            },
+                            onBackgroundColorChoice = { colorArgb ->
+                                val nextColorArgb = safeBackgroundColorArgb(
+                                    requestedBackgroundColorArgb = colorArgb,
+                                    mainColorArgb = mainColorArgb,
+                                )
+                                backgroundColorArgb = nextColorArgb
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_BACKGROUND_COLOR_KEY, nextColorArgb)
+                                }
+                            },
+                            onClockColorChoice = { colorArgb ->
+                                clockColorArgb = colorArgb
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_CLOCK_COLOR_KEY, colorArgb)
+                                }
+                            },
+                            onClockImageChoice = { choiceIndex ->
+                                val nextChoiceIndex = choiceIndex.coerceIn(0, ClockImageChoices.lastIndex)
+                                clockImageIndexState.intValue = nextChoiceIndex
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_CLOCK_IMAGE_INDEX_KEY, nextChoiceIndex)
+                                }
+                            },
+                            onLanguageChoice = { language ->
+                                val nextLanguageIndex = AppLanguages.indexOf(language).coerceAtLeast(0)
+                                appLanguageIndexState.intValue = nextLanguageIndex
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_LANGUAGE_INDEX_KEY, nextLanguageIndex)
+                                }
+                            },
                         )
                     }
                     return@HorizontalPager
@@ -1610,10 +2003,10 @@ fun BeatPulseScreen(
                         beatClockStartedAtMs = beatClockStartedAtMs,
                         tempoNudgeMs = tempoNudgeMs,
                         playbackStartedAtMs = playbackStartedAtMs,
-                        beatVisualsEnabled = pagerState.currentPage == RHYTHM_PAGE_INDEX &&
+                        beatVisualsEnabled = pageShowsRhythmPulse(pagerState.currentPage) &&
                             !pagerState.isScrollInProgress &&
                             abs(pagerState.currentPageOffsetFraction) <= 0.01f,
-                        beatRingVisible = pagerState.currentPage == RHYTHM_PAGE_INDEX &&
+                        beatRingVisible = pageShowsRhythmPulse(pagerState.currentPage) &&
                             !pagerState.isScrollInProgress &&
                             abs(pagerState.currentPageOffsetFraction) <= 0.01f,
                         onEditRhythm = {
@@ -1644,6 +2037,8 @@ fun BeatPulseScreen(
                     tempoNudgeMs = tempoNudgeMs,
                     accentIntensityMode = accentIntensityMode,
                     accentIntensityRanges = metronomeState.accentIntensityRanges,
+                    beatsPerMeasure = currentSong.beatsPerMeasure,
+                    beatAccentTypes = currentSong.beatAccentTypes,
                     a4ReferenceHz = a4ReferenceHz,
                     keepScreenMode = keepScreenMode,
                     mainColorArgb = mainColorArgb,
@@ -1743,6 +2138,13 @@ fun BeatPulseScreen(
                         }
                         metronomeService?.setAccentIntensityRanges(ranges)
                     },
+                    onRhythmPresetChoice = { nextBeatsPerMeasure, nextBeatAccentTypes, nextSubdivisionCount ->
+                        setCurrentSongRhythmPreset(
+                            nextBeatsPerMeasure,
+                            nextBeatAccentTypes,
+                            nextSubdivisionCount,
+                        )
+                    },
                     onA4ReferenceHzChange = { referenceHz ->
                         val nextReferenceHz = referenceHz.coerceIn(MIN_A4_REFERENCE_HZ, MAX_A4_REFERENCE_HZ)
                         a4ReferenceHz = nextReferenceHz
@@ -1837,18 +2239,13 @@ fun BeatPulseScreen(
                 }
             }
 
-            CpuPercentOverlay(
-                cpuUsagePercent = appCpuUsagePercent,
-                modifier = Modifier.align(Alignment.TopStart),
-            )
-
             if (
                     appFeatures.pageCount > 1 &&
                     !audioOverlayOpen &&
                     (
                     appFeatures.isFreeOnly ||
                         pagerState.currentPage != MAIN_PAGE_INDEX &&
-                        pagerState.currentPage != RHYTHM_PAGE_INDEX
+                        !pageShowsRhythmPulse(pagerState.currentPage)
                     )
             ) {
                 PulsePagerIndicator(
@@ -1859,6 +2256,11 @@ fun BeatPulseScreen(
                         .padding(bottom = 8.dp),
                 )
             }
+
+            CpuPercentOverlay(
+                cpuUsagePercent = appCpuUsagePercent,
+                modifier = Modifier.align(Alignment.TopStart),
+            )
 
             if (playlistEditorPopupOpen) {
                 PlaylistEditorPopup(
@@ -1958,6 +2360,13 @@ fun BeatPulseScreen(
                         clearTapTempo()
                         tapTempoPopupOpen = true
                     },
+                    onRhythmPresetChoice = { nextBeatsPerMeasure, nextBeatAccentTypes, nextSubdivisionCount ->
+                        setCurrentSongRhythmPreset(
+                            nextBeatsPerMeasure,
+                            nextBeatAccentTypes,
+                            nextSubdivisionCount,
+                        )
+                    },
                     onSongKeyChange = { step ->
                         updateCurrentSong { song ->
                             song.copy(
@@ -1990,8 +2399,11 @@ fun BeatPulseScreen(
                             song.copy(note = note)
                         }
                     },
+                    showRhythmEditor = !appFeatures.isPlaylistOnly,
                     onEditRhythm = {
-                        playlistRhythmEditorPopupOpen = true
+                        if (!appFeatures.isPlaylistOnly) {
+                            playlistRhythmEditorPopupOpen = true
+                        }
                     },
                     onDone = { savePlaylistEditorAndClose() },
                 )
@@ -2048,52 +2460,113 @@ fun BeatPulseScreen(
             }
 
             if (rhythmEditorPopupOpen) {
+                val displayedRhythmState = if (appFeatures.isRhythmOnly) {
+                    rhythmEditorDraft ?: metronomeState
+                } else {
+                    metronomeState
+                }
                 RhythmEditorPopup(
                     appText = appText,
-                    bpm = bpm,
-                    beatsPerMeasure = beatsPerMeasure,
-                    subdivisionCount = subdivisionCount,
-                    beatAccentTypes = beatAccentTypes,
-                    currentBeatIndex = currentBeatIndex,
-                    currentSubdivisionIndex = currentSubdivisionIndex,
-                    beatFlash = beatFlash,
-                    accentIntensityMode = accentIntensityMode,
-                    accentIntensityRanges = metronomeState.accentIntensityRanges,
+                    bpm = displayedRhythmState.bpm,
+                    beatsPerMeasure = displayedRhythmState.beatsPerMeasure,
+                    subdivisionCount = displayedRhythmState.subdivisionCount,
+                    beatAccentTypes = displayedRhythmState.beatAccentTypes,
+                    currentBeatIndex = displayedRhythmState.currentBeatIndex,
+                    currentSubdivisionIndex = displayedRhythmState.currentSubdivisionIndex,
+                    beatFlash = displayedRhythmState.beatFlash,
+                    accentIntensityMode = displayedRhythmState.accentIntensityMode,
+                    accentIntensityRanges = displayedRhythmState.accentIntensityRanges,
                     appLanguage = appLanguage,
                     onTimeSignatureChoice = { beatChoice ->
-                        metronomeService?.setBeatsPerMeasure(beatChoice)
+                        if (appFeatures.isRhythmOnly) {
+                            updateRhythmEditorDraft { draft ->
+                                val nextBeatsPerMeasure = beatChoice.coerceIn(2, 16)
+                                val nextBeatAccentTypes = draft.beatAccentTypes.normalizedRhythmAccentTypes(
+                                    beatsPerMeasure = nextBeatsPerMeasure,
+                                    accentBeat = draft.accentBeat,
+                                )
+                                draft.copy(
+                                    beatsPerMeasure = nextBeatsPerMeasure,
+                                    accentBeat = nextBeatAccentTypes.primaryRhythmAccentBeat(),
+                                    beatAccentTypes = nextBeatAccentTypes,
+                                    currentBeatIndex = draft.currentBeatIndex.coerceIn(1, nextBeatsPerMeasure),
+                                )
+                            }
+                        } else {
+                            metronomeService?.setBeatsPerMeasure(beatChoice)
+                        }
                     },
                     onBeatAccentTypeCycle = { beatChoice ->
-                        metronomeService?.cycleBeatAccentType(beatChoice)
+                        if (appFeatures.isRhythmOnly) {
+                            updateRhythmEditorDraft { draft ->
+                                val safeBeat = beatChoice.coerceIn(1, draft.beatsPerMeasure)
+                                val nextBeatAccentTypes = draft.beatAccentTypes
+                                    .normalizedRhythmAccentTypes(
+                                        beatsPerMeasure = draft.beatsPerMeasure,
+                                        accentBeat = draft.accentBeat,
+                                    )
+                                    .mapIndexed { index, accentType ->
+                                        if (index + 1 == safeBeat) accentType.next() else accentType
+                                    }
+                                draft.copy(
+                                    accentBeat = nextBeatAccentTypes.primaryRhythmAccentBeat(),
+                                    beatAccentTypes = nextBeatAccentTypes,
+                                )
+                            }
+                        } else {
+                            metronomeService?.cycleBeatAccentType(beatChoice)
+                        }
                     },
                     onSubdivisionChoice = { subdivision ->
-                        metronomeService?.setSubdivisionCount(subdivision)
+                        if (appFeatures.isRhythmOnly) {
+                            updateRhythmEditorDraft { draft ->
+                                draft.copy(
+                                    subdivisionCount = subdivision.toSupportedPulseSubdivisionCount(),
+                                    currentSubdivisionIndex = 1,
+                                )
+                            }
+                        } else {
+                            metronomeService?.setSubdivisionCount(subdivision)
+                        }
                     },
                     onAccentIntensityModeChoice = { mode ->
-                        val nextState = metronomeState.copy(accentIntensityMode = mode)
-                        val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
-                            song.copy(accentIntensityMode = mode)
+                        if (appFeatures.isRhythmOnly) {
+                            updateRhythmEditorDraft { draft ->
+                                draft.copy(accentIntensityMode = mode)
+                            }
+                        } else {
+                            val nextState = metronomeState.copy(accentIntensityMode = mode)
+                            val nextPlaylists = playlists.updateSong(playlistIndex, songIndex) { song ->
+                                song.copy(accentIntensityMode = mode)
+                            }
+                            metronomeState = nextState
+                            playlists = nextPlaylists
+                            if (!isPreview) {
+                                context.saveRhythmState(nextState)
+                                context.saveSavedPlaylists(nextPlaylists)
+                            }
+                            metronomeService?.setAccentIntensityMode(mode)
                         }
-                        metronomeState = nextState
-                        playlists = nextPlaylists
-                        if (!isPreview) {
-                            context.saveRhythmState(nextState)
-                            context.saveSavedPlaylists(nextPlaylists)
-                        }
-                        metronomeService?.setAccentIntensityMode(mode)
                     },
                     onAccentIntensityRangesChange = { ranges ->
-                        val nextState = metronomeState.copy(accentIntensityRanges = ranges)
-                        metronomeState = nextState
-                        if (!isPreview) {
-                            context.saveRhythmState(nextState)
+                        if (appFeatures.isRhythmOnly) {
+                            updateRhythmEditorDraft { draft ->
+                                draft.copy(accentIntensityRanges = ranges)
+                            }
+                        } else {
+                            val nextState = metronomeState.copy(accentIntensityRanges = ranges)
+                            metronomeState = nextState
+                            if (!isPreview) {
+                                context.saveRhythmState(nextState)
+                            }
+                            metronomeService?.setAccentIntensityRanges(ranges)
                         }
-                        metronomeService?.setAccentIntensityRanges(ranges)
                     },
                     onBpmClick = {
                         tapTempoPopupOpen = true
                     },
-                    onDone = { saveRhythmEditorAndClose() },
+                    onCancel = { cancelRhythmEditorAndClose() },
+                    onDone = { commitRhythmEditorAndClose() },
                 )
             }
 
@@ -2101,9 +2574,12 @@ fun BeatPulseScreen(
                 TapTempoPopup(
                     appText = appText,
                     bpm = bpm,
+                    beatsPerMeasure = currentSong.beatsPerMeasure,
+                    subdivisionCount = currentSong.subdivisionCount,
                     beatFlash = beatFlash,
                     isAccentFlash = flashingBeat == accentBeat,
                     isRunning = isRunning,
+                    showAudioTools = appFeatures.showTunerEntry || appFeatures.showSpectrumEntry,
                     onOpenTuner = {
                         tapTempoPopupOpen = false
                         tunerOverlayOpen = true
@@ -2169,11 +2645,19 @@ fun BeatPulseScreen(
                         a4ReferenceHz = a4ReferenceHz,
                         selectedProfile = tunerListenProfile,
                         micPermissionGranted = micPermissionGranted,
+                        showSettingsButton = false,
                         onOpenSpectrum = {
                             tunerOverlayOpen = false
                             spectrumOverlayOpen = true
                         },
-                        onOpenKey = {},
+                        onOpenBpmReader = {
+                            tunerOverlayOpen = false
+                            bpmReaderOverlayOpen = true
+                        },
+                        onOpenKey = {
+                            tunerOverlayOpen = false
+                            keyOverlayOpen = true
+                        },
                         onOpenSettings = {
                             tunerOverlayOpen = false
                             pagerScope.launch {
@@ -2205,8 +2689,14 @@ fun BeatPulseScreen(
                         audioAnalysisState = audioAnalysisState,
                         a4ReferenceHz = a4ReferenceHz,
                         selectedProfile = tunerListenProfile,
+                        selectedReaderMode = spectrumReaderMode,
+                        selectedTuningChoice = spectrumTuningChoice,
                         micPermissionGranted = micPermissionGranted,
-                        onProfileChoice = { tunerListenProfile = it },
+                        onSpectrumSettingsSaved = { readerMode, profile, tuningChoice ->
+                            spectrumReaderMode = readerMode
+                            tunerListenProfile = profile
+                            spectrumTuningChoice = tuningChoice?.takeIf { it.profile == profile }
+                        },
                         onSaveToClock = { detectedBpm, guessedKey ->
                             if (!isPreview) {
                                 context.saveLatestMusicReading(detectedBpm, guessedKey)
@@ -2216,6 +2706,69 @@ fun BeatPulseScreen(
                                 spectrumOverlayOpen = false
                             }
                         },
+                        onOpenFft = {
+                            spectrumOverlayOpen = false
+                            fftOverlayOpen = true
+                        },
+                        onRequestMicPermission = {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                    )
+                }
+            }
+
+            if (keyOverlayOpen) {
+                AnalyzerOverlay(
+                    closeText = appText.done,
+                    onClose = { keyOverlayOpen = false },
+                    glassDoneButton = true,
+                ) {
+                    TuneKeyPage(
+                        appText = appText,
+                        audioAnalysisState = audioAnalysisState,
+                        micPermissionGranted = micPermissionGranted,
+                        showSaveKey = true,
+                        onSaveKey = { guessedKey ->
+                            updateCurrentSong { song -> song.copy(musicalKey = guessedKey) }
+                            keyOverlayOpen = false
+                        },
+                        onRequestMicPermission = {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                    )
+                }
+            }
+
+            if (fftOverlayOpen) {
+                AnalyzerOverlay(
+                    closeText = appText.done,
+                    onClose = { fftOverlayOpen = false },
+                    glassDoneButton = true,
+                ) {
+                    FftLabPage(
+                        appText = appText,
+                        audioAnalysisState = audioAnalysisState,
+                        selectedProfile = tunerListenProfile,
+                        selectedReaderMode = spectrumReaderMode,
+                        a4ReferenceHz = a4ReferenceHz,
+                        micPermissionGranted = micPermissionGranted,
+                        onRequestMicPermission = {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                    )
+                }
+            }
+
+            if (bpmReaderOverlayOpen) {
+                AnalyzerOverlay(
+                    closeText = appText.done,
+                    onClose = { bpmReaderOverlayOpen = false },
+                    glassDoneButton = true,
+                ) {
+                    BpmReaderPage(
+                        appText = appText,
+                        audioAnalysisState = audioAnalysisState,
+                        micPermissionGranted = micPermissionGranted,
                         onRequestMicPermission = {
                             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         },
@@ -2230,6 +2783,7 @@ fun BeatPulseScreen(
 private fun AnalyzerOverlay(
     closeText: String,
     onClose: () -> Unit,
+    glassDoneButton: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     BackHandler(onBack = onClose)
@@ -2242,12 +2796,38 @@ private fun AnalyzerOverlay(
     ) {
         content()
 
-        ArchedDoneButton(
-            text = closeText,
-            onClick = onClose,
-            modifier = Modifier.align(Alignment.TopEnd),
-        )
+        if (glassDoneButton) {
+            ArchedGlassDoneButton(
+                text = closeText,
+                onClick = onClose,
+                modifier = Modifier.align(Alignment.TopEnd),
+            )
+        } else {
+            ArchedDoneButton(
+                text = closeText,
+                onClick = onClose,
+                modifier = Modifier.align(Alignment.TopEnd),
+            )
+        }
     }
+}
+
+@Composable
+internal fun ArchedGlassDoneButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    GlassCommandButton(
+        text = text,
+        modifier = modifier
+            .padding(top = 24.dp, end = 12.dp)
+            .rotate(38f)
+            .width(58.dp)
+            .height(24.dp),
+        fontSize = 9.sp,
+        onClick = onClick,
+    )
 }
 
 @Composable
@@ -2653,18 +3233,18 @@ private fun CpuPercentOverlay(
 ) {
     Box(
         modifier = modifier
-            .padding(start = 5.dp, top = 3.dp)
-            .width(36.dp)
+            .padding(start = 46.dp, top = 44.dp)
+            .width(34.dp)
             .height(18.dp)
             .background(
-                color = Color.Black.copy(alpha = 0.48f),
+                color = Color.Black.copy(alpha = 0.64f),
                 shape = RoundedCornerShape(7.dp),
             ),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = cpuUsagePercent.formatCpuUsageCompactPercent(),
-            fontSize = 10.sp,
+            fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
@@ -2723,6 +3303,27 @@ private fun MetronomeState.withLightClockVisualsFrom(previousState: MetronomeSta
     )
 }
 
+private fun List<BeatAccentType>.normalizedRhythmAccentTypes(
+    beatsPerMeasure: Int,
+    accentBeat: Int,
+): List<BeatAccentType> {
+    val safeBeatsPerMeasure = beatsPerMeasure.coerceIn(2, 16)
+    val safeAccentBeat = accentBeat.coerceIn(1, safeBeatsPerMeasure)
+    return List(safeBeatsPerMeasure) { index ->
+        getOrNull(index) ?: if (index + 1 == safeAccentBeat) BeatAccentType.Big else BeatAccentType.Silent
+    }
+}
+
+private fun List<BeatAccentType>.primaryRhythmAccentBeat(): Int {
+    val bigAccentIndex = indexOfFirst { it == BeatAccentType.Big }
+    if (bigAccentIndex >= 0) return bigAccentIndex + 1
+
+    val audibleAccentIndex = indexOfFirst { it.hasBeep }
+    if (audibleAccentIndex >= 0) return audibleAccentIndex + 1
+
+    return 1
+}
+
 @WearPreviewDevices
 @WearPreviewFontScales
 @Composable
@@ -2746,6 +3347,8 @@ fun SettingsPreview() {
                 tempoNudgeMs = DEFAULT_TEMPO_NUDGE_MS,
                 accentIntensityMode = AccentIntensityMode.Big,
                 accentIntensityRanges = defaultAccentIntensityRanges(),
+                beatsPerMeasure = 4,
+                beatAccentTypes = defaultBeatAccentTypes(4, 1),
                 a4ReferenceHz = DEFAULT_A4_REFERENCE_HZ,
                 keepScreenMode = KeepScreenMode.Playing,
                 mainColorArgb = DEFAULT_MAIN_COLOR,
@@ -2764,6 +3367,7 @@ fun SettingsPreview() {
                 onTempoNudgeChange = {},
                 onAccentIntensityModeChoice = {},
                 onAccentIntensityRangesChange = {},
+                onRhythmPresetChoice = { _, _, _ -> },
                 onA4ReferenceHzChange = {},
                 onKeepScreenModeChoice = {},
                 onMainColorChoice = {},

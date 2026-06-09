@@ -34,7 +34,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 
-private const val TILE_LOGO_RESOURCE_ID = "bpm_munkz_tile_logo_free_v2"
+private const val TILE_LOGO_RESOURCE_ID = "bpm_munkz_tile_logo_metronome_v1"
 
 @ProtoLayoutExperimental
 class BpmMunkzTileService : TileService() {
@@ -137,7 +137,7 @@ private fun tileLogoResource(): ImageResource =
     ImageResource.Builder()
         .setAndroidResourceByResId(
             AndroidImageResourceByResId.Builder()
-                .setResourceId(R.drawable.bpm_munkz_app_logo_free)
+                .setResourceId(R.drawable.bpm_munkz_app_logo_metronome)
                 .build(),
         )
         .build()

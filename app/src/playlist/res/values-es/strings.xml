@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Munkz Setlist</string>
+    <string name="tile_label">Setlist</string>
+    <string name="tile_description">Acceso r&#225;pido para Munkz Setlist.</string>
+</resources>

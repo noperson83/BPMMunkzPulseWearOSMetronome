@@ -1,7 +1,11 @@
 package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import android.graphics.Paint
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -11,10 +15,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -32,6 +41,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
@@ -47,10 +57,13 @@ fun SpectrumAnalyzerPage(
     audioAnalysisState: AudioAnalysisState,
     a4ReferenceHz: Int,
     selectedProfile: TunerListenProfile,
+    selectedReaderMode: SpectrumReaderMode,
+    selectedTuningChoice: SpectrumTuningChoice?,
     micPermissionGranted: Boolean,
     showSaveToClock: Boolean = true,
-    onProfileChoice: (TunerListenProfile) -> Unit,
+    onSpectrumSettingsSaved: (SpectrumReaderMode, TunerListenProfile, SpectrumTuningChoice?) -> Unit,
     onSaveToClock: (Int, String) -> Unit,
+    onOpenFft: () -> Unit,
     onRequestMicPermission: () -> Unit,
 ) {
     val peakReading = remember(audioAnalysisState.spectrum) {
@@ -58,10 +71,15 @@ fun SpectrumAnalyzerPage(
     }
     val detectedBpm = audioAnalysisState.detectedTempoBpm
     val guessedKey = audioAnalysisState.guessedKey
+    var settingsPopupOpen by rememberSaveable { mutableStateOf(false) }
+    var draftReaderMode by rememberSaveable { mutableStateOf(selectedReaderMode) }
+    var draftProfile by rememberSaveable { mutableStateOf(selectedProfile) }
+    var draftTuningChoice by rememberSaveable { mutableStateOf(selectedTuningChoice) }
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
+            .offset(y = (-10).dp)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -70,9 +88,9 @@ fun SpectrumAnalyzerPage(
         val keyFontSize = if (watchSClass) 9.sp else 10.sp
         val graphWidth = if (watchSClass) 160.dp else 176.dp
         val graphHeight = if (watchSClass) 96.dp else 110.dp
-        val profileButtonWidth = if (watchSClass) 32.dp else 36.dp
-        val profileButtonHeight = if (watchSClass) 21.dp else 23.dp
-        val profileButtonFontSize = if (watchSClass) 7.sp else 8.sp
+        val editButtonWidth = if (watchSClass) 46.dp else 54.dp
+        val editButtonHeight = if (watchSClass) 21.dp else 23.dp
+        val editButtonFontSize = if (watchSClass) 8.sp else 9.sp
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -87,19 +105,36 @@ fun SpectrumAnalyzerPage(
 
             Spacer(modifier = Modifier.height(2.dp))
 
-            AudioTempoReadout(
-                detectedBpm = detectedBpm,
-                modifier = Modifier.width(60.dp),
-            )
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AudioTempoReadout(
+                    detectedBpm = detectedBpm,
+                    modifier = Modifier.width(if (watchSClass) 54.dp else 62.dp),
+                    fontSize = keyFontSize,
+                    numberFontSize = keyFontSize,
+                )
 
-            Text(
-                text = guessedKey?.let { "Key of $it" } ?: "Key of --",
-                fontSize = keyFontSize,
-                fontWeight = FontWeight.Bold,
-                color = Color.White.copy(alpha = 0.88f),
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-            )
+                Text(
+                    text = ":",
+                    modifier = Modifier.width(8.dp),
+                    fontSize = keyFontSize,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.72f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                )
+
+                Text(
+                    text = guessedKey?.let { "Key of $it" } ?: "Key of --",
+                    fontSize = keyFontSize,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.88f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                )
+            }
 
             if (!micPermissionGranted) {
                 MicPermissionButton(appText = appText, onClick = onRequestMicPermission)
@@ -107,7 +142,9 @@ fun SpectrumAnalyzerPage(
                 SpectrumAnalyzerGraph(
                     spectrum = audioAnalysisState.spectrum,
                     peakReading = peakReading,
+                    readerMode = selectedReaderMode,
                     restrictionProfile = selectedProfile,
+                    tuningChoice = selectedTuningChoice,
                     modifier = Modifier
                         .width(graphWidth)
                         .height(graphHeight),
@@ -115,30 +152,34 @@ fun SpectrumAnalyzerPage(
             }
         }
 
-        Row(
+        TunerProfileButton(
+            text = appText.edit,
+            selected = false,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(
-                    start = if (watchSClass) 8.dp else 10.dp,
-                    end = if (watchSClass) 8.dp else 10.dp,
-                    bottom = 4.dp,
-                ),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SpectrumTunerListenProfiles.forEach { profile ->
-                TunerProfileButton(
-                    text = profile.labelFor(appLanguage),
-                    selected = selectedProfile == profile,
-                    modifier = Modifier
-                        .width(profileButtonWidth)
-                        .height(profileButtonHeight),
-                    fontSize = profileButtonFontSize,
-                    onClick = { onProfileChoice(profile) },
-                )
-            }
-        }
+                .padding(bottom = 4.dp)
+                .width(editButtonWidth)
+                .height(editButtonHeight),
+            fontSize = editButtonFontSize,
+            onClick = {
+                draftReaderMode = selectedReaderMode
+                draftProfile = selectedProfile
+                draftTuningChoice = selectedTuningChoice
+                settingsPopupOpen = true
+            },
+        )
+
+        TunerProfileButton(
+            text = "FFT",
+            selected = false,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 6.dp, bottom = 4.dp)
+                .width(editButtonWidth)
+                .height(editButtonHeight),
+            fontSize = editButtonFontSize,
+            onClick = onOpenFft,
+        )
 
         if (showSaveToClock && detectedBpm != null && guessedKey != null) {
             ArchedTopStartButton(
@@ -146,6 +187,161 @@ fun SpectrumAnalyzerPage(
                 modifier = Modifier.align(Alignment.TopStart),
                 onClick = { onSaveToClock(detectedBpm, guessedKey) },
             )
+        }
+
+        if (settingsPopupOpen) {
+            SpectrumSettingsPopup(
+                appText = appText,
+                appLanguage = appLanguage,
+                selectedReaderMode = draftReaderMode,
+                selectedProfile = draftProfile,
+                selectedTuningChoice = draftTuningChoice,
+                onReaderModeChoice = { draftReaderMode = it },
+                onProfileChoice = { profile ->
+                    draftProfile = profile
+                    draftTuningChoice = draftTuningChoice
+                        ?.takeIf { it.profile == profile }
+                        ?: profile.defaultSpectrumTuningChoice()
+                },
+                onTuningChoice = { draftTuningChoice = it },
+                onCancel = { settingsPopupOpen = false },
+                onDone = {
+                    onSpectrumSettingsSaved(draftReaderMode, draftProfile, draftTuningChoice)
+                    settingsPopupOpen = false
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SpectrumSettingsPopup(
+    appText: AppText,
+    appLanguage: AppLanguage,
+    selectedReaderMode: SpectrumReaderMode,
+    selectedProfile: TunerListenProfile,
+    selectedTuningChoice: SpectrumTuningChoice?,
+    onReaderModeChoice: (SpectrumReaderMode) -> Unit,
+    onProfileChoice: (TunerListenProfile) -> Unit,
+    onTuningChoice: (SpectrumTuningChoice?) -> Unit,
+    onCancel: () -> Unit,
+    onDone: () -> Unit,
+) {
+    Popup {
+        BackHandler(onBack = onCancel)
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.96f))
+                .clickable(onClick = onCancel),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(onClick = {}),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(horizontal = 14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = appText.spectrum,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TunerProfileButton(
+                            text = "Instrument",
+                            selected = selectedReaderMode == SpectrumReaderMode.Instrument,
+                            modifier = Modifier
+                                .width(82.dp)
+                                .height(24.dp),
+                            fontSize = 8.sp,
+                            onClick = { onReaderModeChoice(SpectrumReaderMode.Instrument) },
+                        )
+
+                        TunerProfileButton(
+                            text = "Song",
+                            selected = selectedReaderMode == SpectrumReaderMode.Song,
+                            modifier = Modifier
+                                .width(54.dp)
+                                .height(24.dp),
+                            fontSize = 9.sp,
+                            onClick = { onReaderModeChoice(SpectrumReaderMode.Song) },
+                        )
+                    }
+
+                    SpectrumTunerListenProfiles.chunked(3).forEach { rowProfiles ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            rowProfiles.forEach { profile ->
+                                TunerProfileButton(
+                                    text = profile.spectrumPopupLabel(),
+                                    selected = selectedProfile == profile,
+                                    modifier = Modifier
+                                        .width(50.dp)
+                                        .height(23.dp),
+                                    fontSize = 7.sp,
+                                    onClick = { onProfileChoice(profile) },
+                                )
+                            }
+                        }
+                    }
+
+                    if (selectedReaderMode == SpectrumReaderMode.Instrument) {
+                        val tuningChoices = spectrumTuningChoicesFor(selectedProfile)
+                        if (tuningChoices.isNotEmpty()) {
+                            Text(
+                                text = "Tuning",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                            )
+
+                            tuningChoices.chunked(3).forEach { rowChoices ->
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    rowChoices.forEach { tuningChoice ->
+                                        TunerProfileButton(
+                                            text = tuningChoice.label,
+                                            selected = selectedTuningChoice == tuningChoice,
+                                            modifier = Modifier
+                                                .width(48.dp)
+                                                .height(22.dp),
+                                            fontSize = 7.sp,
+                                            onClick = { onTuningChoice(tuningChoice) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ArchedGlassDoneButton(
+                    text = "Save",
+                    modifier = Modifier.align(Alignment.TopEnd),
+                    onClick = onDone,
+                )
+            }
         }
     }
 }
@@ -221,18 +417,26 @@ private fun ArchedTopStartButton(
 private fun SpectrumAnalyzerGraph(
     spectrum: List<Float>,
     peakReading: SpectrumPeak?,
+    readerMode: SpectrumReaderMode,
     restrictionProfile: TunerListenProfile,
+    tuningChoice: SpectrumTuningChoice?,
     modifier: Modifier = Modifier,
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.secondary
     val axisColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.52f)
     val spectrumBands = remember { spectrumBands() }
+    val listenRange = remember(readerMode, restrictionProfile, tuningChoice) {
+        restrictionProfile.audioListenRangeFor(readerMode, tuningChoice)
+    }
+    val targetFrequencies = remember(readerMode, restrictionProfile, tuningChoice) {
+        restrictionProfile.spectrumTargetsFor(readerMode, tuningChoice)
+    }
     Canvas(modifier = modifier) {
         val chartLeft = 24.dp.toPx()
         val chartTop = 6.dp.toPx()
         val chartRight = size.width - 2.dp.toPx()
-        val chartBottom = size.height - 18.dp.toPx()
+        val chartBottom = size.height - 28.dp.toPx()
         val chartWidth = (chartRight - chartLeft).coerceAtLeast(1f)
         val chartHeight = (chartBottom - chartTop).coerceAtLeast(1f)
         val points = spectrum.ifEmpty { List(SPECTRUM_BAR_COUNT) { 0f } }
@@ -268,8 +472,8 @@ private fun SpectrumAnalyzerGraph(
             )
         }
 
-        val restrictionStartX = frequencyToX(restrictionProfile.minHz)
-        val restrictionEndX = frequencyToX(restrictionProfile.maxHz)
+        val restrictionStartX = frequencyToX(listenRange.minHz)
+        val restrictionEndX = frequencyToX(listenRange.maxHz)
         drawRect(
             color = secondaryColor.copy(alpha = 0.07f),
             topLeft = Offset(restrictionStartX, chartTop),
@@ -296,6 +500,11 @@ private fun SpectrumAnalyzerGraph(
         }
         val restrictionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = secondaryColor.copy(alpha = 0.88f).toArgb()
+            textSize = 6.sp.toPx()
+            textAlign = Paint.Align.CENTER
+        }
+        val targetPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = primaryColor.copy(alpha = 0.9f).toArgb()
             textSize = 6.sp.toPx()
             textAlign = Paint.Align.CENTER
         }
@@ -408,8 +617,8 @@ private fun SpectrumAnalyzerGraph(
         }
 
         listOf(
-            restrictionProfile.minHz to restrictionStartX,
-            restrictionProfile.maxHz to restrictionEndX,
+            listenRange.minHz to restrictionStartX,
+            listenRange.maxHz to restrictionEndX,
         ).forEach { (frequency, x) ->
             drawLine(
                 color = secondaryColor.copy(alpha = 0.86f),
@@ -423,6 +632,22 @@ private fun SpectrumAnalyzerGraph(
                 x,
                 chartTop + 7.dp.toPx(),
                 restrictionPaint,
+            )
+        }
+
+        targetFrequencies.forEach { target ->
+            val x = frequencyToX(target.frequencyHz)
+            drawLine(
+                color = primaryColor.copy(alpha = 0.7f),
+                start = Offset(x, chartTop),
+                end = Offset(x, chartBottom),
+                strokeWidth = 1.5.dp.toPx(),
+            )
+            drawContext.canvas.nativeCanvas.drawText(
+                target.label,
+                x,
+                chartBottom + 21.dp.toPx(),
+                targetPaint,
             )
         }
 
@@ -454,5 +679,17 @@ private fun SpectrumAnalyzerGraph(
             end = Offset(chartRight, chartBottom),
             strokeWidth = 1.dp.toPx(),
         )
+    }
+}
+
+private fun TunerListenProfile.spectrumPopupLabel(): String {
+    return when (this) {
+        TunerListenProfile.Full -> "Full"
+        TunerListenProfile.Bass -> "Bass"
+        TunerListenProfile.Guitar -> "Guitar"
+        TunerListenProfile.Voice -> "Voice"
+        TunerListenProfile.Violin -> "Violin"
+        TunerListenProfile.Trumpet -> "Trumpet"
+        TunerListenProfile.High -> "High"
     }
 }

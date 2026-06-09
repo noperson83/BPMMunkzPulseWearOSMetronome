@@ -5,6 +5,8 @@ import bpm.munkz.pulse_wear.os.bpm.BuildConfig
 internal enum class AppEdition {
     Bpm,
     Tune,
+    Rhythm,
+    Playlist,
     Pro,
 }
 
@@ -15,13 +17,17 @@ internal data class AppFeatureSet(
     val showSpectrumEntry: Boolean,
     val showTapRhythmChoices: Boolean,
 ) {
-    val isFreeOnly: Boolean = edition == AppEdition.Bpm
+    val isFreeOnly: Boolean = false
     val isTuneOnly: Boolean = edition == AppEdition.Tune
+    val isRhythmOnly: Boolean = edition == AppEdition.Rhythm
+    val isPlaylistOnly: Boolean = edition == AppEdition.Playlist
 }
 
 internal object AppEditionConfig {
     private val edition = when (BuildConfig.APP_EDITION) {
         "tune" -> AppEdition.Tune
+        "rhythm" -> AppEdition.Rhythm
+        "playlist" -> AppEdition.Playlist
         "pro" -> AppEdition.Pro
         else -> AppEdition.Bpm
     }
@@ -31,10 +37,12 @@ internal object AppEditionConfig {
         pageCount = when (edition) {
             AppEdition.Bpm -> 2
             AppEdition.Tune -> TUNE_PAGE_COUNT
+            AppEdition.Rhythm -> RHYTHM_PAGE_COUNT
+            AppEdition.Playlist -> PLAYLIST_PAGE_COUNT
             AppEdition.Pro -> PULSE_PAGE_COUNT
         },
         showTunerEntry = edition == AppEdition.Pro || edition == AppEdition.Tune,
         showSpectrumEntry = edition == AppEdition.Pro || edition == AppEdition.Tune,
-        showTapRhythmChoices = edition == AppEdition.Pro,
+        showTapRhythmChoices = edition == AppEdition.Pro || edition == AppEdition.Rhythm,
     )
 }

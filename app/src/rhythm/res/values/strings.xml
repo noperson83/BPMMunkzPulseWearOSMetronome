@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Munkz Rhythm</string>
+    <string name="tile_label">Rhythm</string>
+    <string name="tile_description">Quick launch tile for Munkz Rhythm.</string>
+</resources>

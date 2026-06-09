@@ -82,6 +82,7 @@ internal fun PlaylistClockPage(
     playbackStartedAtMs: Long,
     clockImageResId: Int,
     clockColorArgb: Int,
+    forceSimpleRhythm: Boolean = false,
     onPreviousSong: () -> Unit,
     onNextSong: () -> Unit,
     onEditPlaylist: () -> Unit,
@@ -233,7 +234,7 @@ internal fun PlaylistClockPage(
         )
 
         Text(
-            text = "${song.beatsPerMeasure}/4 x${song.subdivisionCount}",
+            text = if (forceSimpleRhythm) "4/4 x1" else "${song.beatsPerMeasure}/4 x${song.subdivisionCount}",
             modifier = Modifier.align(Alignment.BottomStart)
                 .padding(start = rhythmStartPadding, bottom = rhythmBottomPadding),
             fontSize = rhythmFontSize,
@@ -446,10 +447,12 @@ internal fun PlaylistEditorPopup(
     onSongNameEdit: (String) -> Unit,
     onSongBpmChange: (Int) -> Unit,
     onSongBpmClick: () -> Unit,
+    onRhythmPresetChoice: (Int, List<BeatAccentType>, Int) -> Unit,
     onSongKeyChange: (Int) -> Unit,
     onSongKeySet: (String) -> Unit,
     onSongNoteChange: (Int) -> Unit,
     onSongNoteEdit: (String) -> Unit,
+    showRhythmEditor: Boolean = true,
     onEditRhythm: () -> Unit,
     onDone: () -> Unit,
 ) {
@@ -470,10 +473,12 @@ internal fun PlaylistEditorPopup(
             onSongNameEdit = onSongNameEdit,
             onSongBpmChange = onSongBpmChange,
             onSongBpmClick = onSongBpmClick,
+            onRhythmPresetChoice = onRhythmPresetChoice,
             onSongKeyChange = onSongKeyChange,
             onSongKeySet = onSongKeySet,
             onSongNoteChange = onSongNoteChange,
             onSongNoteEdit = onSongNoteEdit,
+            showRhythmEditor = showRhythmEditor,
             onEditRhythm = onEditRhythm,
             onDone = onDone,
         )
@@ -570,10 +575,12 @@ private fun PlaylistEditorPage(
     onSongNameEdit: (String) -> Unit,
     onSongBpmChange: (Int) -> Unit,
     onSongBpmClick: () -> Unit,
+    onRhythmPresetChoice: (Int, List<BeatAccentType>, Int) -> Unit,
     onSongKeyChange: (Int) -> Unit,
     onSongKeySet: (String) -> Unit,
     onSongNoteChange: (Int) -> Unit,
     onSongNoteEdit: (String) -> Unit,
+    showRhythmEditor: Boolean = true,
     onEditRhythm: () -> Unit,
     onDone: () -> Unit,
 ) {
@@ -624,6 +631,16 @@ private fun PlaylistEditorPage(
 
             Spacer(modifier = Modifier.height(9.dp))
 
+            RhythmPresetButtons(
+                beatsPerMeasure = song.beatsPerMeasure,
+                beatAccentTypes = song.beatAccentTypes,
+                buttonWidth = 42.dp,
+                buttonHeight = 25.dp,
+                onPresetChoice = onRhythmPresetChoice,
+            )
+
+            Spacer(modifier = Modifier.height(7.dp))
+
             EditValueRow(
                 label = "BPM",
                 value = "${song.bpm}",
@@ -663,14 +680,16 @@ private fun PlaylistEditorPage(
                     onClick = onDeleteSong,
                 )
 
-                SmallCommandButton(
-                    text = appText.editRhythm,
-                    modifier = Modifier
-                        .width(92.dp)
-                        .height(28.dp),
-                    fontSize = 10.sp,
-                    onClick = onEditRhythm,
-                )
+                if (showRhythmEditor) {
+                    SmallCommandButton(
+                        text = appText.editRhythm,
+                        modifier = Modifier
+                            .width(92.dp)
+                            .height(28.dp),
+                        fontSize = 10.sp,
+                        onClick = onEditRhythm,
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -771,7 +790,7 @@ internal fun MusicalKeyPickerPopup(
         Column(
             modifier = Modifier
                 .align(Alignment.Center)
-                .offset(y = (-10).dp)
+                .offset(y = (-4).dp)
                 .width(176.dp)
                 .padding(top = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -798,9 +817,11 @@ internal fun MusicalKeyPickerPopup(
                 onNext = { suffix = cycleOption(MusicalKeyModeSuffixes, suffix, 1) },
             )
 
+            Spacer(modifier = Modifier.height(5.dp))
+
             Text(
                 text = selectedKey,
-                fontSize = 18.sp,
+                fontSize = 21.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,

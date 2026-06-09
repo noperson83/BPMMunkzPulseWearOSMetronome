@@ -126,6 +126,7 @@ private fun ClockImagePicker(
     selectedIndex: Int,
     appLanguage: AppLanguage,
     onClockImageChoice: (Int) -> Unit,
+    enabled: Boolean = true,
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -144,6 +145,7 @@ private fun ClockImagePicker(
                         modifier = Modifier
                             .width(42.dp)
                             .height(26.dp),
+                        enabled = enabled,
                         onClick = { onClockImageChoice(choiceIndex) },
                     )
                 }
@@ -172,6 +174,124 @@ private fun BigRingModePicker(
                     .height(26.dp),
                 enabled = enabled,
                 onClick = { onModeChoice(choice.mode) },
+            )
+        }
+    }
+}
+
+private enum class RhythmPresetPattern {
+    OnOne,
+    All,
+}
+
+private fun rhythmPresetAccentTypes(
+    beatsPerMeasure: Int,
+    pattern: RhythmPresetPattern,
+): List<BeatAccentType> {
+    val safeBeatsPerMeasure = beatsPerMeasure.coerceIn(2, 16)
+    return List(safeBeatsPerMeasure) { index ->
+        when {
+            index == 0 -> BeatAccentType.Big
+            pattern == RhythmPresetPattern.All -> BeatAccentType.Medium
+            else -> BeatAccentType.Silent
+        }
+    }
+}
+
+private fun rhythmPresetSubdivisionCount(
+    beatsPerMeasure: Int,
+    pattern: RhythmPresetPattern,
+): Int {
+    return when (pattern) {
+        RhythmPresetPattern.OnOne -> 1
+        RhythmPresetPattern.All -> beatsPerMeasure.coerceIn(3, 4)
+    }
+}
+
+private fun List<BeatAccentType>.matchesRhythmPresetPattern(
+    beatsPerMeasure: Int,
+    pattern: RhythmPresetPattern,
+): Boolean {
+    return take(beatsPerMeasure) == rhythmPresetAccentTypes(beatsPerMeasure, pattern)
+}
+
+@Composable
+internal fun RhythmPresetButtons(
+    beatsPerMeasure: Int,
+    beatAccentTypes: List<BeatAccentType>,
+    buttonWidth: androidx.compose.ui.unit.Dp,
+    buttonHeight: androidx.compose.ui.unit.Dp,
+    enabled: Boolean = true,
+    onPresetChoice: (Int, List<BeatAccentType>, Int) -> Unit,
+) {
+    val presetBeatsPerMeasure = beatsPerMeasure.coerceIn(3, 4)
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ChoicePillButton(
+            text = "On 1",
+            selected = beatAccentTypes.matchesRhythmPresetPattern(
+                presetBeatsPerMeasure,
+                RhythmPresetPattern.OnOne,
+            ),
+            modifier = Modifier
+                .width(buttonWidth)
+                .height(buttonHeight),
+            enabled = enabled,
+            onClick = {
+                onPresetChoice(
+                    presetBeatsPerMeasure,
+                    rhythmPresetAccentTypes(presetBeatsPerMeasure, RhythmPresetPattern.OnOne),
+                    rhythmPresetSubdivisionCount(presetBeatsPerMeasure, RhythmPresetPattern.OnOne),
+                )
+            },
+        )
+
+        ChoicePillButton(
+            text = "All",
+            selected = beatAccentTypes.matchesRhythmPresetPattern(
+                presetBeatsPerMeasure,
+                RhythmPresetPattern.All,
+            ),
+            modifier = Modifier
+                .width(buttonWidth)
+                .height(buttonHeight),
+            enabled = enabled,
+            onClick = {
+                onPresetChoice(
+                    presetBeatsPerMeasure,
+                    rhythmPresetAccentTypes(presetBeatsPerMeasure, RhythmPresetPattern.All),
+                    rhythmPresetSubdivisionCount(presetBeatsPerMeasure, RhythmPresetPattern.All),
+                )
+            },
+        )
+
+        listOf(3, 4).forEach { meter ->
+            val pattern = if (
+                beatAccentTypes.matchesRhythmPresetPattern(
+                    presetBeatsPerMeasure,
+                    RhythmPresetPattern.All,
+                )
+            ) {
+                RhythmPresetPattern.All
+            } else {
+                RhythmPresetPattern.OnOne
+            }
+            ChoicePillButton(
+                text = "$meter/4",
+                selected = presetBeatsPerMeasure == meter,
+                modifier = Modifier
+                    .width(buttonWidth)
+                    .height(buttonHeight),
+                enabled = enabled,
+                onClick = {
+                    onPresetChoice(
+                        meter,
+                        rhythmPresetAccentTypes(meter, pattern),
+                        rhythmPresetSubdivisionCount(meter, pattern),
+                    )
+                },
             )
         }
     }
@@ -210,6 +330,10 @@ internal fun SimpleSettingsPage(
     hapticsEnabled: Boolean,
     beepEnabled: Boolean,
     beatSoundMode: BeatSoundMode,
+    beatsPerMeasure: Int? = null,
+    beatAccentTypes: List<BeatAccentType>? = null,
+    accentIntensityMode: AccentIntensityMode? = null,
+    accentIntensityRanges: List<AccentIntensityRange>? = null,
     keepScreenMode: KeepScreenMode,
     mainColorArgb: Int,
     backgroundColorArgb: Int,
@@ -226,6 +350,9 @@ internal fun SimpleSettingsPage(
     onHapticsToggle: () -> Unit,
     onBeepToggle: () -> Unit,
     onBeatSoundModeChoice: (BeatSoundMode) -> Unit,
+    onRhythmPresetChoice: ((Int, List<BeatAccentType>, Int) -> Unit)? = null,
+    onAccentIntensityModeChoice: ((AccentIntensityMode) -> Unit)? = null,
+    onAccentIntensityRangesChange: ((List<AccentIntensityRange>) -> Unit)? = null,
     onKeepScreenModeChoice: (KeepScreenMode) -> Unit,
     onMainColorChoice: (Int) -> Unit,
     onBackgroundColorChoice: (Int) -> Unit,
@@ -234,6 +361,7 @@ internal fun SimpleSettingsPage(
     onLanguageChoice: (AppLanguage) -> Unit,
 ) {
     var buyNowPopupOpen by rememberSaveable { mutableStateOf(false) }
+    var intensityPickerOpen by rememberSaveable { mutableStateOf(false) }
     val settingsScrollState = rememberScrollState()
 
     BoxWithConstraints(
@@ -327,6 +455,49 @@ internal fun SimpleSettingsPage(
             }
 
             Spacer(modifier = Modifier.height(sectionSpacing))
+
+            if (beatsPerMeasure != null && beatAccentTypes != null && onRhythmPresetChoice != null) {
+                RhythmPresetButtons(
+                    beatsPerMeasure = beatsPerMeasure,
+                    beatAccentTypes = beatAccentTypes,
+                    buttonWidth = choiceWidth,
+                    buttonHeight = choiceHeight,
+                    enabled = settingsEnabled,
+                    onPresetChoice = onRhythmPresetChoice,
+                )
+
+                Spacer(modifier = Modifier.height(sectionSpacing))
+            }
+
+            if (
+                accentIntensityMode != null &&
+                accentIntensityRanges != null &&
+                onAccentIntensityModeChoice != null &&
+                onAccentIntensityRangesChange != null
+            ) {
+                Text(
+                    text = appText.intensityTitle.replace('\n', ' '),
+                    fontSize = labelFontSize,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onBackground.copy(
+                        alpha = if (settingsEnabled) 1f else 0.34f,
+                    ),
+                    maxLines = 1,
+                )
+
+                Spacer(modifier = Modifier.height(tightSpacing))
+
+                AccentIntensityPicker(
+                    accentIntensityRanges = accentIntensityRanges,
+                    appLanguage = appLanguage,
+                    enabled = settingsEnabled,
+                    onClick = {
+                        intensityPickerOpen = true
+                    },
+                )
+
+                Spacer(modifier = Modifier.height(sectionSpacing))
+            }
 
             Text(
                 text = appText.keepScreenOn,
@@ -451,6 +622,34 @@ internal fun SimpleSettingsPage(
                 },
                 onDismiss = {
                     buyNowPopupOpen = false
+                },
+            )
+        }
+
+        if (
+            intensityPickerOpen &&
+            accentIntensityMode != null &&
+            accentIntensityRanges != null &&
+            onAccentIntensityModeChoice != null &&
+            onAccentIntensityRangesChange != null
+        ) {
+            AccentIntensityChoicePopup(
+                title = appText.intensityTitle,
+                selectedMode = accentIntensityMode,
+                accentIntensityRanges = accentIntensityRanges,
+                appLanguage = appLanguage,
+                dismissText = appText.done,
+                onModeChoice = onAccentIntensityModeChoice,
+                onValueChange = { mode, value ->
+                    onAccentIntensityRangesChange(
+                        accentIntensityRanges.withRangeFor(
+                            mode,
+                            accentIntensityRanges.rangeFor(mode).copy(valuePercent = value),
+                        ),
+                    )
+                },
+                onDismiss = {
+                    intensityPickerOpen = false
                 },
             )
         }
@@ -642,6 +841,317 @@ internal fun TuneSettingsPage(
 }
 
 @Composable
+internal fun PlaylistSettingsPage(
+    appText: AppText,
+    hapticsEnabled: Boolean,
+    beepEnabled: Boolean,
+    beatSoundMode: BeatSoundMode,
+    keyDroneEnabled: Boolean,
+    keyDroneVolumePercent: Int,
+    a4ReferenceHz: Int,
+    keepScreenMode: KeepScreenMode,
+    mainColorArgb: Int,
+    backgroundColorArgb: Int,
+    clockColorArgb: Int,
+    clockImageIndex: Int,
+    appLanguage: AppLanguage,
+    appCpuUsagePercent: Float?,
+    showBuyNowButton: Boolean,
+    settingsEnabled: Boolean,
+    trialStatusText: String,
+    trialButtonText: String,
+    trialButtonEnabled: Boolean,
+    onStartTrial: () -> Unit,
+    onHapticsToggle: () -> Unit,
+    onBeepToggle: () -> Unit,
+    onBeatSoundModeChoice: (BeatSoundMode) -> Unit,
+    onKeyDroneToggle: () -> Unit,
+    onKeyDroneVolumeChange: (Int) -> Unit,
+    onA4ReferenceHzChange: (Int) -> Unit,
+    onKeepScreenModeChoice: (KeepScreenMode) -> Unit,
+    onMainColorChoice: (Int) -> Unit,
+    onBackgroundColorChoice: (Int) -> Unit,
+    onClockColorChoice: (Int) -> Unit,
+    onClockImageChoice: (Int) -> Unit,
+    onLanguageChoice: (AppLanguage) -> Unit,
+) {
+    val settingsScrollState = rememberScrollState()
+    var buyNowPopupOpen by rememberSaveable { mutableStateOf(false) }
+
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        val watchSClass = minOf(maxWidth, maxHeight) <= 200.dp
+        val contentHorizontalPadding = if (watchSClass) 8.dp else 12.dp
+        val contentVerticalPadding = if (watchSClass) 14.dp else 20.dp
+        val titleFontSize = if (watchSClass) 15.sp else 17.sp
+        val sectionTitleFontSize = if (watchSClass) 11.sp else 12.sp
+        val labelFontSize = if (watchSClass) 9.sp else 10.sp
+        val choiceWidth = if (watchSClass) 38.dp else 42.dp
+        val choiceHeight = if (watchSClass) 24.dp else 26.dp
+        val tightSpacing = if (watchSClass) 3.dp else 4.dp
+        val smallSpacing = if (watchSClass) 4.dp else 5.dp
+        val sectionSpacing = if (watchSClass) 8.dp else 11.dp
+        val scrollIndicatorHeight = if (watchSClass) 104.dp else 118.dp
+        val enabledAlpha = if (settingsEnabled) 1f else 0.34f
+
+        Column(
+            modifier = Modifier
+                .verticalScroll(settingsScrollState)
+                .padding(horizontal = contentHorizontalPadding, vertical = contentVerticalPadding),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (showBuyNowButton) {
+                SettingsCommandButton(
+                    text = "BUY NOW",
+                    prominent = true,
+                    modifier = Modifier
+                        .width(if (watchSClass) 116.dp else 130.dp)
+                        .height(if (watchSClass) 28.dp else 30.dp),
+                    fontSize = if (watchSClass) 12.sp else 13.sp,
+                    onClick = {
+                        buyNowPopupOpen = true
+                    },
+                )
+
+                Spacer(modifier = Modifier.height(if (watchSClass) 5.dp else 7.dp))
+            }
+
+            Text(
+                text = appText.settings,
+                fontSize = titleFontSize,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ChoicePillButton(
+                    text = appText.haptics,
+                    selected = hapticsEnabled,
+                    modifier = Modifier
+                        .width(choiceWidth)
+                        .height(choiceHeight),
+                    enabled = settingsEnabled,
+                    onClick = onHapticsToggle,
+                )
+
+                ChoicePillButton(
+                    text = appText.beep,
+                    selected = beepEnabled,
+                    modifier = Modifier
+                        .width(choiceWidth)
+                        .height(choiceHeight),
+                    enabled = settingsEnabled,
+                    onClick = onBeepToggle,
+                )
+
+                ChoicePillButton(
+                    text = appText.wood,
+                    selected = beatSoundMode == BeatSoundMode.Wood,
+                    modifier = Modifier
+                        .width(choiceWidth)
+                        .height(choiceHeight),
+                    enabled = settingsEnabled,
+                    onClick = { onBeatSoundModeChoice(BeatSoundMode.Wood) },
+                )
+
+                ChoicePillButton(
+                    text = appText.bell,
+                    selected = beatSoundMode == BeatSoundMode.Bell,
+                    modifier = Modifier
+                        .width(choiceWidth)
+                        .height(choiceHeight),
+                    enabled = settingsEnabled,
+                    onClick = { onBeatSoundModeChoice(BeatSoundMode.Bell) },
+                )
+            }
+
+            Spacer(modifier = Modifier.height(if (watchSClass) 5.dp else 7.dp))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                PercentStepperControl(
+                    label = appText.droneVolume,
+                    valuePercent = keyDroneVolumePercent,
+                    enabled = settingsEnabled,
+                    onValueChange = onKeyDroneVolumeChange,
+                )
+
+                ChoicePillButton(
+                    text = appText.drone,
+                    selected = keyDroneEnabled,
+                    modifier = Modifier
+                        .width(choiceWidth)
+                        .height(choiceHeight),
+                    enabled = settingsEnabled,
+                    onClick = onKeyDroneToggle,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            A4ReferenceControl(
+                label = appText.a4Reference,
+                referenceHz = a4ReferenceHz,
+                enabled = settingsEnabled,
+                onReferenceHzChange = onA4ReferenceHzChange,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.keepScreenOn,
+                fontSize = labelFontSize,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
+            )
+
+            Spacer(modifier = Modifier.height(tightSpacing))
+
+            KeepScreenModeButtons(
+                selectedMode = keepScreenMode,
+                appText = appText,
+                enabled = settingsEnabled,
+                onModeChoice = onKeepScreenModeChoice,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.theme,
+                fontSize = sectionTitleFontSize,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Spacer(modifier = Modifier.height(tightSpacing))
+
+            Text(
+                text = appText.mainColor,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            ColorPickerRow(
+                selectedColorArgb = mainColorArgb,
+                onColorChoice = onMainColorChoice,
+                colorOptions = ThemeMainColorOptions,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.backgroundColor,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            ColorPickerRow(
+                selectedColorArgb = backgroundColorArgb,
+                onColorChoice = onBackgroundColorChoice,
+                colorOptions = ThemeBackgroundColorOptions,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.clock,
+                fontSize = sectionTitleFontSize,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Spacer(modifier = Modifier.height(tightSpacing))
+
+            Text(
+                text = appText.handColor,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            ColorPickerRow(
+                selectedColorArgb = clockColorArgb,
+                onColorChoice = onClockColorChoice,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.clockImage,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            ClockImagePicker(
+                selectedIndex = clockImageIndex,
+                appLanguage = appLanguage,
+                enabled = settingsEnabled,
+                onClockImageChoice = onClockImageChoice,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
+                text = appText.language,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            LanguagePicker(
+                selectedLanguage = appLanguage,
+                onLanguageChoice = onLanguageChoice,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            SettingsDiagnosticsSection(
+                appText = appText,
+                appCpuUsagePercent = appCpuUsagePercent,
+                titleFontSize = sectionTitleFontSize,
+                spacing = tightSpacing,
+            )
+        }
+
+        SettingsScrollIndicator(
+            scrollState = settingsScrollState,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 4.dp)
+                .width(4.dp)
+                .height(scrollIndicatorHeight),
+        )
+
+        if (buyNowPopupOpen) {
+            BuyNowChoicePopup(
+                trialStatusText = trialStatusText,
+                trialButtonText = trialButtonText,
+                trialButtonEnabled = trialButtonEnabled,
+                onStartTrial = {
+                    onStartTrial()
+                    buyNowPopupOpen = false
+                },
+                onDismiss = {
+                    buyNowPopupOpen = false
+                },
+            )
+        }
+    }
+}
+
+@Composable
 internal fun SettingsPage(
     appText: AppText,
     hapticsEnabled: Boolean,
@@ -652,6 +1162,8 @@ internal fun SettingsPage(
     tempoNudgeMs: Int,
     accentIntensityMode: AccentIntensityMode,
     accentIntensityRanges: List<AccentIntensityRange>,
+    beatsPerMeasure: Int,
+    beatAccentTypes: List<BeatAccentType>,
     a4ReferenceHz: Int,
     keepScreenMode: KeepScreenMode,
     mainColorArgb: Int,
@@ -672,6 +1184,7 @@ internal fun SettingsPage(
     onTempoNudgeChange: (Int) -> Unit,
     onAccentIntensityModeChoice: (AccentIntensityMode) -> Unit,
     onAccentIntensityRangesChange: (List<AccentIntensityRange>) -> Unit,
+    onRhythmPresetChoice: (Int, List<BeatAccentType>, Int) -> Unit,
     onA4ReferenceHzChange: (Int) -> Unit,
     onKeepScreenModeChoice: (KeepScreenMode) -> Unit,
     onMainColorChoice: (Int) -> Unit,
@@ -789,6 +1302,16 @@ internal fun SettingsPage(
                     onClick = { onBeatSoundModeChoice(BeatSoundMode.Bell) },
                 )
             }
+
+            Spacer(modifier = Modifier.height(if (watchSClass) 5.dp else 7.dp))
+
+            RhythmPresetButtons(
+                beatsPerMeasure = beatsPerMeasure,
+                beatAccentTypes = beatAccentTypes,
+                buttonWidth = if (watchSClass) 38.dp else 42.dp,
+                buttonHeight = choiceHeight,
+                onPresetChoice = onRhythmPresetChoice,
+            )
 
             Spacer(modifier = Modifier.height(if (watchSClass) 5.dp else 7.dp))
 
@@ -1184,8 +1707,10 @@ private fun A4ReferenceControl(
 private fun PercentStepperControl(
     label: String,
     valuePercent: Int,
+    enabled: Boolean = true,
     onValueChange: (Int) -> Unit,
 ) {
+    val enabledAlpha = if (enabled) 1f else 0.34f
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -1193,7 +1718,7 @@ private fun PercentStepperControl(
             text = label,
             fontSize = 11.sp,
             textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
             maxLines = 1,
         )
 
@@ -1209,6 +1734,7 @@ private fun PercentStepperControl(
                     .width(24.dp)
                     .height(22.dp),
                 fontSize = 11.sp,
+                enabled = enabled,
                 onClick = { onValueChange(-5) },
             )
 
@@ -1217,7 +1743,7 @@ private fun PercentStepperControl(
                 modifier = Modifier.width(54.dp),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = enabledAlpha),
                 textAlign = TextAlign.Center,
                 maxLines = 1,
             )
@@ -1228,6 +1754,7 @@ private fun PercentStepperControl(
                     .width(24.dp)
                     .height(22.dp),
                 fontSize = 11.sp,
+                enabled = enabled,
                 onClick = { onValueChange(5) },
             )
         }
@@ -1300,22 +1827,24 @@ private fun MillisecondStepperControl(
 private fun AccentIntensityPicker(
     accentIntensityRanges: List<AccentIntensityRange>,
     appLanguage: AppLanguage,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(50)
+    val enabledAlpha = if (enabled) 1f else 0.34f
 
     Box(
         modifier = Modifier
             .width(166.dp)
             .height(36.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.84f), shape)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.84f * enabledAlpha), shape)
             .border(
                 width = 1.dp,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.95f),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.95f * enabledAlpha),
                 shape = shape,
             )
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Row(
@@ -1333,7 +1862,7 @@ private fun AccentIntensityPicker(
                         text = choice.labelFor(appLanguage),
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = enabledAlpha),
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                     )
@@ -1341,7 +1870,7 @@ private fun AccentIntensityPicker(
                         text = value.toString(),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = enabledAlpha),
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                     )
@@ -1392,11 +1921,9 @@ internal fun AccentIntensityChoicePopup(
             .clickable(onClick = {}),
         contentAlignment = Alignment.Center,
     ) {
-        SettingsDoneButton(
+        ArchedGlassDoneButton(
             text = dismissText,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 0.dp, end = 0.dp),
+            modifier = Modifier.align(Alignment.TopEnd),
             onClick = onDismiss,
         )
 
@@ -1652,22 +2179,6 @@ private fun BuyNowChoicePopup(
             )
         }
     }
-}
-
-@Composable
-private fun SettingsDoneButton(
-    text: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    SettingsCommandButton(
-        text = text,
-        modifier = modifier
-            .width(56.dp)
-            .height(24.dp),
-        fontSize = 9.sp,
-        onClick = onClick,
-    )
 }
 
 @Composable

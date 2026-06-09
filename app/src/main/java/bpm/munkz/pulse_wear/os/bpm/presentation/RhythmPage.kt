@@ -75,6 +75,7 @@ internal fun TapTempoFree(
     isRunning: Boolean,
     showAudioTools: Boolean = true,
     showRhythmChoices: Boolean = true,
+    showTimeSignatureReadout: Boolean = false,
     onOpenTuner: () -> Unit,
     onOpenSpectrum: () -> Unit,
     onTapTempo: () -> Unit,
@@ -155,7 +156,7 @@ internal fun TapTempoFree(
                 }
             }
 
-            if (showRhythmChoices) {
+            if (showRhythmChoices || showTimeSignatureReadout) {
                 GlassCommandButton(
                     text = "$beatsPerMeasure/4 x$subdivisionCount",
                     modifier = Modifier
@@ -168,7 +169,9 @@ internal fun TapTempoFree(
                     prominent = false,
                     onClick = onTimeSignatureClick,
                 )
+            }
 
+            if (showRhythmChoices) {
                 GlassCommandButton(
                     text = musicalKey,
                     modifier = Modifier
@@ -277,9 +280,12 @@ private fun TapTempoControls(
 internal fun TapTempoPopup(
     appText: AppText,
     bpm: Int,
+    beatsPerMeasure: Int? = null,
+    subdivisionCount: Int? = null,
     beatFlash: Boolean,
     isAccentFlash: Boolean,
     isRunning: Boolean,
+    showAudioTools: Boolean = true,
     onOpenTuner: () -> Unit,
     onOpenSpectrum: () -> Unit,
     onTapTempo: () -> Unit,
@@ -298,6 +304,11 @@ internal fun TapTempoPopup(
         contentAlignment = Alignment.Center,
     ) {
         val watchSClass = minOf(maxWidth, maxHeight) <= 200.dp
+        val bottomChoiceHorizontalPadding = if (watchSClass) 14.dp else 20.dp
+        val bottomChoiceBottomPadding = if (watchSClass) 50.dp else 57.dp
+        val bottomChoiceWidth = if (watchSClass) 50.dp else 54.dp
+        val bottomChoiceHeight = if (watchSClass) 22.dp else 24.dp
+        val bottomChoiceFontSize = if (watchSClass) 9.sp else 10.sp
         TapTempoControls(
             appText = appText,
             bpm = bpm,
@@ -324,14 +335,16 @@ internal fun TapTempoPopup(
             footerTopSpacing = if (watchSClass) 4.dp else 6.dp,
             prominentTempoButtons = true,
             header = {
-                AudioToolButtons(
-                    appText = appText,
-                    onOpenTuner = onOpenTuner,
-                    onOpenSpectrum = onOpenSpectrum,
-                    modifier = Modifier
-                        .width(if (watchSClass) 154.dp else 164.dp)
-                        .height(if (watchSClass) 21.dp else 22.dp),
-                )
+                if (showAudioTools) {
+                    AudioToolButtons(
+                        appText = appText,
+                        onOpenTuner = onOpenTuner,
+                        onOpenSpectrum = onOpenSpectrum,
+                        modifier = Modifier
+                            .width(if (watchSClass) 154.dp else 164.dp)
+                            .height(if (watchSClass) 21.dp else 22.dp),
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(0.dp))
 
@@ -364,6 +377,21 @@ internal fun TapTempoPopup(
                 )
             }
         }
+
+        if (beatsPerMeasure != null && subdivisionCount != null) {
+            GlassCommandButton(
+                text = "$beatsPerMeasure/4 x$subdivisionCount",
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = bottomChoiceHorizontalPadding, bottom = bottomChoiceBottomPadding)
+                    .width(bottomChoiceWidth)
+                    .height(bottomChoiceHeight),
+                fontSize = bottomChoiceFontSize,
+                selected = false,
+                prominent = false,
+                onClick = {},
+            )
+        }
     }
 }
 
@@ -383,6 +411,7 @@ internal fun RhythmSetupPage(
     playbackStartedAtMs: Long,
     beatVisualsEnabled: Boolean,
     beatRingVisible: Boolean,
+    showAudioTools: Boolean = true,
     onEditRhythm: () -> Unit,
     onToggleRunning: () -> Unit,
     onBpmClick: () -> Unit,
@@ -448,6 +477,7 @@ internal fun RhythmSetupPage(
             beatTextFontSize = if (watchSClass) 17.sp else 20.sp,
             audioButtonHeight = if (watchSClass) 20.dp else 21.dp,
             audioButtonFontSize = if (watchSClass) 9.sp else 10.sp,
+            showAudioTools = showAudioTools,
             startButtonWidth = if (watchSClass) 100.dp else 112.dp,
             startButtonHeight = if (watchSClass) 31.dp else 36.dp,
             startButtonFontSize = if (watchSClass) 13.sp else 15.sp,
@@ -508,6 +538,7 @@ private fun RhythmLiveCanvas(
     beatTextFontSize: TextUnit = 20.sp,
     audioButtonHeight: Dp = 21.dp,
     audioButtonFontSize: TextUnit = 10.sp,
+    showAudioTools: Boolean = true,
     startButtonWidth: Dp = 112.dp,
     startButtonHeight: Dp = 36.dp,
     startButtonFontSize: TextUnit = 15.sp,
@@ -561,19 +592,21 @@ private fun RhythmLiveCanvas(
 
                 Row(
                     modifier = Modifier.width(controlRowWidth),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = if (showAudioTools) Arrangement.SpaceBetween else Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    GlassCommandButton(
-                        text = appText.tuner,
-                        modifier = Modifier
-                            .width(38.dp)
-                            .height(audioButtonHeight),
-                        fontSize = audioButtonFontSize,
-                        selected = false,
-                        prominent = false,
-                        onClick = onOpenTuner,
-                    )
+                    if (showAudioTools) {
+                        GlassCommandButton(
+                            text = appText.tuner,
+                            modifier = Modifier
+                                .width(38.dp)
+                                .height(audioButtonHeight),
+                            fontSize = audioButtonFontSize,
+                            selected = false,
+                            prominent = false,
+                            onClick = onOpenTuner,
+                        )
+                    }
 
                     Text(
                         text = "$currentBeatIndex/$beatsPerMeasure",
@@ -584,16 +617,18 @@ private fun RhythmLiveCanvas(
                         textAlign = TextAlign.Center,
                     )
 
-                    GlassCommandButton(
-                        text = "Spect",
-                        modifier = Modifier
-                            .width(42.dp)
-                            .height(audioButtonHeight),
-                        fontSize = audioButtonFontSize,
-                        selected = false,
-                        prominent = false,
-                        onClick = onOpenSpectrum,
-                    )
+                    if (showAudioTools) {
+                        GlassCommandButton(
+                            text = "Spect",
+                            modifier = Modifier
+                                .width(42.dp)
+                                .height(audioButtonHeight),
+                            fontSize = audioButtonFontSize,
+                            selected = false,
+                            prominent = false,
+                            onClick = onOpenSpectrum,
+                        )
+                    }
                 }
 
                 TempoPushSubdivisionRow(
@@ -969,11 +1004,12 @@ internal fun RhythmEditorPopup(
     onAccentIntensityRangesChange: (List<AccentIntensityRange>) -> Unit,
     onBpmClick: () -> Unit,
     onDone: () -> Unit,
+    onCancel: () -> Unit = onDone,
 ) {
     var activeChoicePicker by rememberSaveable { mutableStateOf<RhythmChoicePicker?>(null) }
     var intensityPickerOpen by rememberSaveable { mutableStateOf(false) }
 
-    DismissibleEditorPopup(onDone = onDone) {
+    DismissibleEditorPopup(onDone = onCancel) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center,

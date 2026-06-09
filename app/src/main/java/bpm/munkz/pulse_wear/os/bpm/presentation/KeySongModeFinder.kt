@@ -30,6 +30,7 @@ data class KeyAnalysis(
     val recentNotes: List<String>,
     val guessedKey: String?,
     val likelyChords: List<String>,
+    val chordTones: List<String>,
 )
 
 private data class KeyGuess(
@@ -45,6 +46,12 @@ private data class ScaleProfile(
     val chordQualities: List<String>,
 )
 
+private data class ChordGuess(
+    val label: String,
+    val tones: List<String>,
+    val score: Float,
+)
+
 fun String.toNoteClass(): String? {
     val noteClass = takeWhile { it.isLetter() || it == '#' }
     return noteClass.takeIf { it in KeyNoteClasses }
@@ -56,6 +63,7 @@ fun analyzeMusicalKey(noteClasses: List<String>): KeyAnalysis {
             recentNotes = noteClasses.takeLast(8),
             guessedKey = null,
             likelyChords = emptyList(),
+            chordTones = emptyList(),
         )
     }
 
@@ -89,10 +97,12 @@ fun analyzeMusicalKey(noteClasses: List<String>): KeyAnalysis {
     }
 
     val guess = bestGuess
+    val chordGuesses = guess?.likelyChordGuesses(weightedCounts).orEmpty()
     return KeyAnalysis(
         recentNotes = noteClasses.takeLast(8),
         guessedKey = guess?.displayName,
-        likelyChords = guess?.likelyChords(weightedCounts).orEmpty(),
+        likelyChords = chordGuesses.map { it.label },
+        chordTones = chordGuesses.firstOrNull()?.tones.orEmpty(),
     )
 }
 
@@ -128,7 +138,7 @@ private fun scaleScore(
     return score
 }
 
-private fun KeyGuess.likelyChords(counts: FloatArray): List<String> {
+private fun KeyGuess.likelyChordGuesses(counts: FloatArray): List<ChordGuess> {
     return scale.offsets.asSequence()
         .mapIndexed { degreeIndex, offset ->
             val chordRootIndex = (rootIndex + offset).floorMod(KeyNoteClasses.size)
@@ -140,11 +150,18 @@ private fun KeyGuess.likelyChords(counts: FloatArray): List<String> {
             val score = (counts[chordRootIndex] * 3.2f * rootWeight) +
                 (counts[thirdIndex] * 2f) +
                 (counts[fifthIndex] * 2f)
-            "${KeyNoteClasses[chordRootIndex]}${scale.chordQualities[degreeIndex]}" to score
+            ChordGuess(
+                label = "${KeyNoteClasses[chordRootIndex]}${scale.chordQualities[degreeIndex]}",
+                tones = listOf(
+                    KeyNoteClasses[chordRootIndex],
+                    KeyNoteClasses[thirdIndex],
+                    KeyNoteClasses[fifthIndex],
+                ),
+                score = score,
+            )
         }
-        .sortedByDescending { it.second }
-        .map { it.first }
-        .distinct()
+        .sortedByDescending { it.score }
+        .distinctBy { it.label }
         .take(3)
         .toList()
 }

@@ -29,6 +29,7 @@ internal fun TuneKeyPage(
     onRequestMicPermission: () -> Unit,
 ) {
     val guessedKey = audioAnalysisState.guessedKey
+    val chordTones = audioAnalysisState.chordTones.ifEmpty { listOf("--", "--", "--") }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -40,8 +41,10 @@ internal fun TuneKeyPage(
         val titleFontSize = if (watchSClass) 15.sp else 17.sp
         val keyFontSize = if (watchSClass) 36.sp else 42.sp
         val labelFontSize = if (watchSClass) 10.sp else 11.sp
-        val chordFontSize = if (watchSClass) 13.sp else 15.sp
-        val notesFontSize = if (watchSClass) 9.sp else 10.sp
+        val chordFontSize = if (watchSClass) 12.sp else 14.sp
+        val toneLabelFontSize = if (watchSClass) 7.sp else 8.sp
+        val toneFontSize = if (watchSClass) 11.sp else 12.sp
+        val notesFontSize = if (watchSClass) 8.sp else 9.sp
 
         if (!micPermissionGranted) {
             Column(
@@ -71,7 +74,7 @@ internal fun TuneKeyPage(
                 color = MaterialTheme.colorScheme.primary,
             )
 
-            Spacer(modifier = Modifier.height(if (watchSClass) 6.dp else 8.dp))
+            Spacer(modifier = Modifier.height(if (watchSClass) 4.dp else 6.dp))
 
             Text(
                 text = guessedKey ?: "--",
@@ -82,7 +85,42 @@ internal fun TuneKeyPage(
                 maxLines = 1,
             )
 
-            Spacer(modifier = Modifier.height(if (watchSClass) 4.dp else 6.dp))
+            Spacer(modifier = Modifier.height(if (watchSClass) 2.dp else 3.dp))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                listOf("Root", "3rd", "5th").forEachIndexed { index, label ->
+                    Column(
+                        modifier = Modifier.width(if (watchSClass) 36.dp else 42.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = toneLabelFontSize,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.54f),
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = chordTones.getOrElse(index) { "--" },
+                            fontSize = toneFontSize,
+                            fontWeight = FontWeight.Bold,
+                            color = if (index == 1 && chordTones.getOrNull(index) != "--") {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onBackground.copy(alpha = 0.86f)
+                            },
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(if (watchSClass) 2.dp else 3.dp))
 
             Text(
                 text = "Likely chords",
@@ -91,17 +129,17 @@ internal fun TuneKeyPage(
                 textAlign = TextAlign.Center,
             )
 
-            Spacer(modifier = Modifier.height(3.dp))
+            Spacer(modifier = Modifier.height(2.dp))
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 val chords = audioAnalysisState.likelyChords.ifEmpty { listOf("--", "--", "--") }
                 chords.take(3).forEach { chord ->
                     Text(
                         text = chord,
-                        modifier = Modifier.width(if (watchSClass) 38.dp else 42.dp),
+                        modifier = Modifier.width(if (watchSClass) 36.dp else 40.dp),
                         fontSize = chordFontSize,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground,
@@ -111,7 +149,7 @@ internal fun TuneKeyPage(
                 }
             }
 
-            Spacer(modifier = Modifier.height(if (watchSClass) 5.dp else 7.dp))
+            Spacer(modifier = Modifier.height(if (watchSClass) 3.dp else 5.dp))
 
             Text(
                 text = audioAnalysisState.recentNotes.joinToString(" ").ifBlank { "--" },

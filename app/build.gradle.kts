@@ -33,6 +33,18 @@ android {
             versionNameSuffix = "-tune"
             buildConfigField("String", "APP_EDITION", "\"tune\"")
         }
+        create("rhythm") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse_wear.os.rhythm"
+            versionNameSuffix = "-rhythm"
+            buildConfigField("String", "APP_EDITION", "\"rhythm\"")
+        }
+        create("playlist") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse_wear.os.playlist"
+            versionNameSuffix = "-playlist"
+            buildConfigField("String", "APP_EDITION", "\"playlist\"")
+        }
         create("pro") {
             dimension = "edition"
             applicationId = "bpm.munkz.pulse_wear.os.pro"

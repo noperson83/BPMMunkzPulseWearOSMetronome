@@ -22,6 +22,7 @@ import kotlin.math.log2
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 private const val AUDIO_SAMPLE_RATE = 44_100
@@ -35,6 +36,9 @@ private const val TUNER_NOTE_HOLD_MS = 650L
 private const val TUNER_NOTE_SWITCH_CONFIRMATION_COUNT = 3
 private const val TUNER_NOTE_LOST_HOLD_MS = 1_200L
 private const val TUNER_KEY_SWITCH_CONFIRMATION_COUNT = 5
+private const val TUNER_MIN_PITCH_LEVEL = 0.0065f
+private const val TUNER_MIN_KEY_LEVEL = 0.012f
+private const val TUNER_A4_REFERENCE_SAMPLE_COUNT = 18
 private const val MIN_TEMPO_ONSET_INTERVAL_MS = 300L
 private const val MAX_TEMPO_ONSET_INTERVAL_MS = 2_000L
 private const val TEMPO_ONSET_HISTORY_COUNT = 24
@@ -53,6 +57,27 @@ private data class PitchAnalysisState(
     val recentNotes: List<String> = emptyList(),
     val guessedKey: String? = null,
     val likelyChords: List<String> = emptyList(),
+    val chordTones: List<String> = emptyList(),
+    val sensedA4Hz: Float? = null,
+    val sensedA4OffsetCents: Int = 0,
+)
+
+private data class TempoAnalysisState(
+    val detectedBpm: Int? = null,
+    val strictBpm: Int? = null,
+    val bassBpm: Int? = null,
+    val snareBpm: Int? = null,
+    val fluxBpm: Int? = null,
+    val smartConfidence: Float = 0f,
+    val learningBeats: Int = 0,
+    val activeBeatIndex: Int = -1,
+    val confident: Boolean = false,
+    val meter: Int = 4,
+)
+
+private data class FftFrame(
+    val magnitudes: FloatArray,
+    val binHz: Float,
 )
 
 private fun AudioAnalysisState.toPitchAnalysisState(): PitchAnalysisState {
@@ -63,6 +88,9 @@ private fun AudioAnalysisState.toPitchAnalysisState(): PitchAnalysisState {
         recentNotes = recentNotes,
         guessedKey = guessedKey,
         likelyChords = likelyChords,
+        chordTones = chordTones,
+        sensedA4Hz = sensedA4Hz,
+        sensedA4OffsetCents = sensedA4OffsetCents,
     )
 }
 
@@ -70,19 +98,24 @@ private fun AudioAnalysisState.toPitchAnalysisState(): PitchAnalysisState {
 fun rememberAudioAnalysisState(
     enabled: Boolean,
     listenProfile: TunerListenProfile,
+    readerMode: SpectrumReaderMode,
+    tuningChoice: SpectrumTuningChoice? = null,
     a4ReferenceHz: Int,
     includeSpectrum: Boolean,
 ): AudioAnalysisState {
     var analysisState by remember { mutableStateOf(AudioAnalysisState()) }
+    val listenRange = remember(listenProfile, readerMode, tuningChoice) {
+        listenProfile.audioListenRangeFor(readerMode, tuningChoice)
+    }
 
-    LaunchedEffect(enabled, listenProfile, a4ReferenceHz, includeSpectrum) {
+    LaunchedEffect(enabled, listenRange, a4ReferenceHz, includeSpectrum) {
         if (!enabled) {
             analysisState = AudioAnalysisState()
             return@LaunchedEffect
         }
 
         runAudioAnalyzer(
-            listenProfile = listenProfile,
+            listenRange = listenRange,
             a4ReferenceHz = a4ReferenceHz,
             includeSpectrum = includeSpectrum,
         ) { nextState ->
@@ -95,7 +128,7 @@ fun rememberAudioAnalysisState(
 
 @SuppressLint("MissingPermission")
 private suspend fun runAudioAnalyzer(
-    listenProfile: TunerListenProfile,
+    listenRange: AudioListenRange,
     a4ReferenceHz: Int,
     includeSpectrum: Boolean,
     onAnalysis: (AudioAnalysisState) -> Unit,
@@ -133,17 +166,19 @@ private suspend fun runAudioAnalyzer(
         AUDIO_TEMPO_LOG_TAG,
         "audio init requestedRate=$AUDIO_SAMPLE_RATE actualRate=${recorder.sampleRate} " +
             "state=${recorder.state} minBuffer=$minBufferSize bufferSize=$bufferSize " +
-            "frameSize=$AUDIO_FRAME_SIZE pitchStride=$pitchFrameStride listen=${listenProfile.label} " +
-            "range=${listenProfile.minHz.roundToInt()}-${listenProfile.maxHz.roundToInt()}Hz " +
+            "frameSize=$AUDIO_FRAME_SIZE pitchStride=$pitchFrameStride listen=${listenRange.label} " +
+            "range=${listenRange.minHz.roundToInt()}-${listenRange.maxHz.roundToInt()}Hz " +
             "spectrum=$includeSpectrum",
     )
     val buffer = ShortArray(AUDIO_FRAME_SIZE)
-    val pitchAverager = TunerPitchAverager(listenProfile)
+    val pitchAverager = TunerPitchAverager(listenRange)
     val tempoEstimator = MicTempoEstimator()
     var frameIndex = 0L
     var audioSamplePosition = 0L
     var lastUiUpdateElapsedMs = 0L
     var lastPublishedTempoBpm: Int? = null
+    var lastPublishedTempoBeatIndex = -1
+    var lastPublishedTempoLearningBeats = 0
     var lastPitchAnalysis = PitchAnalysisState()
 
     try {
@@ -166,7 +201,7 @@ private suspend fun runAudioAnalyzer(
                     buffer = buffer,
                     read = read,
                     frameStartAudioMs = frameStartAudioMs,
-                    listenProfile = listenProfile,
+                    listenRange = listenRange,
                     pitchAverager = pitchAverager,
                     tempoEstimator = tempoEstimator,
                     a4ReferenceHz = a4ReferenceHz,
@@ -185,7 +220,9 @@ private suspend fun runAudioAnalyzer(
                     )
                     lastProcessingLogElapsedMs = nowElapsedMs
                 }
-                val tempoChanged = analysis.detectedTempoBpm != lastPublishedTempoBpm
+                val tempoChanged = analysis.detectedTempoBpm != lastPublishedTempoBpm ||
+                    analysis.tempoActiveBeatIndex != lastPublishedTempoBeatIndex ||
+                    analysis.tempoLearningBeats != lastPublishedTempoLearningBeats
                 if (
                     nowElapsedMs - lastUiUpdateElapsedMs >= AUDIO_UI_UPDATE_INTERVAL_MS ||
                     tempoChanged
@@ -193,6 +230,8 @@ private suspend fun runAudioAnalyzer(
                     onAnalysis(analysis)
                     lastUiUpdateElapsedMs = nowElapsedMs
                     lastPublishedTempoBpm = analysis.detectedTempoBpm
+                    lastPublishedTempoBeatIndex = analysis.tempoActiveBeatIndex
+                    lastPublishedTempoLearningBeats = analysis.tempoLearningBeats
                 }
             }
         }
@@ -208,7 +247,7 @@ private fun analyzeAudioFrame(
     buffer: ShortArray,
     read: Int,
     frameStartAudioMs: Long,
-    listenProfile: TunerListenProfile,
+    listenRange: AudioListenRange,
     pitchAverager: TunerPitchAverager,
     tempoEstimator: MicTempoEstimator,
     a4ReferenceHz: Int,
@@ -244,14 +283,33 @@ private fun analyzeAudioFrame(
     val level = sqrt(sumSquares / sampleCount).toFloat().coerceIn(0f, 1f)
     val transientAverage = (transientSum / sampleCount).toFloat()
     val transientLevel = max(transientAverage * 5.0f, transientPeak * 0.35f).coerceIn(0f, 1f)
+    val fftFrame = buildFftFrame(buffer, sampleCount)
+    val bassPulseLevel = fftBandLevel(fftFrame, minHz = 40f, maxHz = 180f, gain = 70f)
+    val snarePulseLevel = fftBandLevel(fftFrame, minHz = 180f, maxHz = 4_000f, gain = 34f)
+    val fluxPulseLevel = tempoEstimator.spectralFluxLevel(fftFrame, minHz = 55f, maxHz = 5_500f, gain = 42f)
     val transientAudioTimeMs = frameStartAudioMs + ((peakIndex * 1_000L) / AUDIO_SAMPLE_RATE)
-    val pitchAnalysis = if (analyzePitch) {
-        val frequency = pitchAverager.average(detectPitchHz(buffer, sampleCount, listenProfile))
+    val pitchAnalysis = if (analyzePitch && level >= TUNER_MIN_PITCH_LEVEL) {
+        val frequency = pitchAverager.average(detectPitchHz(buffer, sampleCount, listenRange))
         val note = pitchAverager.stableNoteReading(
             noteReading = frequency?.toNoteReading(a4ReferenceHz),
             audioTimeMs = frameStartAudioMs,
         )
-        val keyAnalysis = pitchAverager.noteSummary(note?.first)
+        val sensedA4Hz = if (note != null) {
+            pitchAverager.sensedA4Reference(frequency)
+        } else {
+            null
+        }
+        val keyAnalysis = if (level >= TUNER_MIN_KEY_LEVEL && note != null) {
+            pitchAverager.noteSummary(note.first)
+        } else {
+            pitchAverager.clearKeySummary()
+            KeyAnalysis(
+                recentNotes = emptyList(),
+                guessedKey = null,
+                likelyChords = emptyList(),
+                chordTones = emptyList(),
+            )
+        }
         PitchAnalysisState(
             frequencyHz = frequency,
             noteName = note?.first ?: "--",
@@ -259,32 +317,58 @@ private fun analyzeAudioFrame(
             recentNotes = keyAnalysis.recentNotes,
             guessedKey = keyAnalysis.guessedKey,
             likelyChords = keyAnalysis.likelyChords,
+            chordTones = keyAnalysis.chordTones,
+            sensedA4Hz = sensedA4Hz,
+            sensedA4OffsetCents = sensedA4Hz?.let { sensed ->
+                centsBetween(sensed, a4ReferenceHz.toFloat()).roundToInt()
+            } ?: 0,
         )
+    } else if (level < TUNER_MIN_PITCH_LEVEL) {
+        pitchAverager.clear()
+        PitchAnalysisState()
     } else {
         previousPitchAnalysis
     }
-    val detectedTempoBpm = tempoEstimator.estimate(level = transientLevel, audioTimeMs = transientAudioTimeMs)
+    val tempoAnalysis = tempoEstimator.estimate(
+        strictLevel = transientLevel,
+        bassLevel = bassPulseLevel,
+        snareLevel = snarePulseLevel,
+        fluxLevel = fluxPulseLevel,
+        audioTimeMs = transientAudioTimeMs,
+    )
 
     return AudioAnalysisState(
         frequencyHz = pitchAnalysis.frequencyHz,
         noteName = pitchAnalysis.noteName,
         cents = pitchAnalysis.cents,
         level = level,
-        detectedTempoBpm = detectedTempoBpm,
+        detectedTempoBpm = tempoAnalysis.detectedBpm,
+        strictTempoBpm = tempoAnalysis.strictBpm,
+        bassTempoBpm = tempoAnalysis.bassBpm,
+        snareTempoBpm = tempoAnalysis.snareBpm,
+        fluxTempoBpm = tempoAnalysis.fluxBpm,
+        smartTempoConfidence = tempoAnalysis.smartConfidence,
+        tempoLearningBeats = tempoAnalysis.learningBeats,
+        tempoActiveBeatIndex = tempoAnalysis.activeBeatIndex,
+        tempoConfident = tempoAnalysis.confident,
+        tempoMeter = tempoAnalysis.meter,
         recentNotes = pitchAnalysis.recentNotes,
         guessedKey = pitchAnalysis.guessedKey,
         likelyChords = pitchAnalysis.likelyChords,
-        spectrum = if (includeSpectrum) buildSpectrum(buffer, sampleCount) else emptyList(),
+        chordTones = pitchAnalysis.chordTones,
+        sensedA4Hz = pitchAnalysis.sensedA4Hz,
+        sensedA4OffsetCents = pitchAnalysis.sensedA4OffsetCents,
+        spectrum = if (includeSpectrum) buildSpectrum(fftFrame) else emptyList(),
     )
 }
 
 private fun detectPitchHz(
     buffer: ShortArray,
     sampleCount: Int,
-    listenProfile: TunerListenProfile,
+    listenRange: AudioListenRange,
 ): Float? {
-    val minLag = (AUDIO_SAMPLE_RATE / listenProfile.maxHz).roundToInt().coerceAtLeast(1)
-    val maxLag = (AUDIO_SAMPLE_RATE / listenProfile.minHz).roundToInt().coerceAtMost(sampleCount - 2)
+    val minLag = (AUDIO_SAMPLE_RATE / listenRange.maxHz).roundToInt().coerceAtLeast(1)
+    val maxLag = (AUDIO_SAMPLE_RATE / listenRange.minHz).roundToInt().coerceAtMost(sampleCount - 2)
     if (maxLag <= minLag) return null
 
     var bestLag = 0
@@ -317,9 +401,10 @@ private fun detectPitchHz(
 }
 
 private class TunerPitchAverager(
-    private val listenProfile: TunerListenProfile,
+    private val listenRange: AudioListenRange,
 ) {
     private val recentFrequencies = mutableListOf<Float>()
+    private val recentA4References = mutableListOf<Float>()
     private val recentNoteClasses = mutableListOf<String>()
     private var stableNoteReading: Pair<String, Int>? = null
     private var stableNoteUpdatedAtMs = 0L
@@ -330,7 +415,7 @@ private class TunerPitchAverager(
     private var pendingKeyCount = 0
 
     fun average(frequency: Float?): Float? {
-        if (frequency == null || frequency !in listenProfile.minHz..listenProfile.maxHz) {
+        if (frequency == null || frequency !in listenRange.minHz..listenRange.maxHz) {
             return recentFrequencies.smartAverageOrNull()
         }
 
@@ -437,10 +522,52 @@ private class TunerPitchAverager(
             stableKeyAnalysis?.copy(recentNotes = nextAnalysis.recentNotes) ?: nextAnalysis
         }
     }
+
+    fun sensedA4Reference(frequency: Float?): Float? {
+        val estimate = frequency?.estimatedA4Reference() ?: return recentA4References.smartAverageOrNull()
+        recentA4References += estimate
+        while (recentA4References.size > TUNER_A4_REFERENCE_SAMPLE_COUNT) {
+            recentA4References.removeAt(0)
+        }
+        return recentA4References.smartAverageOrNull()
+    }
+
+    fun clearKeySummary() {
+        recentNoteClasses.clear()
+        recentA4References.clear()
+        stableKeyAnalysis = null
+        pendingKeyName = null
+        pendingKeyCount = 0
+    }
+
+    fun clear() {
+        recentFrequencies.clear()
+        stableNoteReading = null
+        stableNoteUpdatedAtMs = 0L
+        pendingNoteName = null
+        pendingNoteCount = 0
+        clearKeySummary()
+    }
 }
 
 private class MicTempoEstimator {
     private val onsetTimesMs = mutableListOf<Long>()
+    private val onsetStrengths = mutableListOf<Float>()
+    private val bassTempoEngine = AuxiliaryTempoEngine(
+        levelThresholdFloor = 0.005f,
+        jumpThresholdFloor = 0.002f,
+        smoothing = 0.94f,
+    )
+    private val snareTempoEngine = AuxiliaryTempoEngine(
+        levelThresholdFloor = 0.004f,
+        jumpThresholdFloor = 0.0018f,
+        smoothing = 0.93f,
+    )
+    private val fluxTempoEngine = AuxiliaryTempoEngine(
+        levelThresholdFloor = 0.004f,
+        jumpThresholdFloor = 0.0016f,
+        smoothing = 0.92f,
+    )
     private var smoothedLevel = 0f
     private var previousLevel = 0f
     private var lastOnsetMs = 0L
@@ -449,16 +576,33 @@ private class MicTempoEstimator {
     private var pendingTempoCount = 0
     private var lastDebugLogMs = 0L
     private var lastLoggedStableTempoBpm: Int? = null
+    private var stableMeter = 4
+    private var previousFluxMagnitudes: FloatArray? = null
 
-    fun estimate(level: Float, audioTimeMs: Long): Int? {
-        val safeLevel = level.coerceIn(0f, 1f)
+    fun estimate(
+        strictLevel: Float,
+        bassLevel: Float,
+        snareLevel: Float,
+        fluxLevel: Float,
+        audioTimeMs: Long,
+    ): TempoAnalysisState {
+        val safeLevel = strictLevel.coerceIn(0f, 1f)
+        val bassBpm = bassTempoEngine.estimate(bassLevel, audioTimeMs)
+        val snareBpm = snareTempoEngine.estimate(snareLevel, audioTimeMs)
+        val fluxBpm = fluxTempoEngine.estimate(fluxLevel, audioTimeMs)
         val intervalSinceLastOnsetMs = if (lastOnsetMs > 0L) audioTimeMs - lastOnsetMs else null
         if (lastOnsetMs > 0L && audioTimeMs - lastOnsetMs > TEMPO_DETECTION_TIMEOUT_MS) {
-            onsetTimesMs.clear()
+            clearTempoState()
             stableTempoBpm = null
             pendingTempoBpm = null
             pendingTempoCount = 0
         }
+        val smartTempo = combineTempoVotes(
+            strictBpm = stableTempoBpm,
+            bassBpm = bassBpm,
+            snareBpm = snareBpm,
+            fluxBpm = fluxBpm,
+        )
         smoothedLevel = if (smoothedLevel <= 0f) {
             safeLevel
         } else {
@@ -482,19 +626,28 @@ private class MicTempoEstimator {
                 intervalSinceLastOnsetMs = intervalSinceLastOnsetMs,
                 candidateBpm = null,
             )
-            return stableTempoBpm
+            return tempoState(
+                activeBeatIndex = -1,
+                bassBpm = bassBpm,
+                snareBpm = snareBpm,
+                fluxBpm = fluxBpm,
+                smartTempo = smartTempo,
+            )
         }
 
         lastOnsetMs = audioTimeMs
         onsetTimesMs += audioTimeMs
+        onsetStrengths += (safeLevel + levelJump.coerceAtLeast(0f))
         while (onsetTimesMs.size > TEMPO_ONSET_HISTORY_COUNT) {
             onsetTimesMs.removeAt(0)
+            onsetStrengths.removeAt(0)
         }
 
         val candidateBpm = estimateTempoFromOnsets(hasStableTempo = stableTempoBpm != null)
         candidateBpm?.let { candidate ->
             updateStableTempo(candidate)
         }
+        stableMeter = estimateMeterFromAccents()
         logTempoDebug(
             audioTimeMs = audioTimeMs,
             safeLevel = safeLevel,
@@ -503,7 +656,71 @@ private class MicTempoEstimator {
             intervalSinceLastOnsetMs = intervalSinceLastOnsetMs,
             candidateBpm = candidateBpm,
         )
-        return stableTempoBpm
+        return tempoState(
+            activeBeatIndex = (onsetTimesMs.size - 1).floorMod(stableMeter),
+            bassBpm = bassBpm,
+            snareBpm = snareBpm,
+            fluxBpm = fluxBpm,
+            smartTempo = combineTempoVotes(
+                strictBpm = stableTempoBpm,
+                bassBpm = bassBpm,
+                snareBpm = snareBpm,
+                fluxBpm = fluxBpm,
+            ),
+        )
+    }
+
+    private fun tempoState(
+        activeBeatIndex: Int,
+        bassBpm: Int?,
+        snareBpm: Int?,
+        fluxBpm: Int?,
+        smartTempo: SmartTempoVote,
+    ): TempoAnalysisState {
+        return TempoAnalysisState(
+            detectedBpm = smartTempo.bpm ?: stableTempoBpm,
+            strictBpm = stableTempoBpm,
+            bassBpm = bassBpm,
+            snareBpm = snareBpm,
+            fluxBpm = fluxBpm,
+            smartConfidence = smartTempo.confidence,
+            learningBeats = onsetTimesMs.size.coerceIn(0, stableMeter),
+            activeBeatIndex = activeBeatIndex,
+            confident = stableTempoBpm != null || smartTempo.confidence >= 0.55f,
+            meter = stableMeter,
+        )
+    }
+
+    private fun clearTempoState() {
+        onsetTimesMs.clear()
+        onsetStrengths.clear()
+        bassTempoEngine.clear()
+        snareTempoEngine.clear()
+        fluxTempoEngine.clear()
+        previousFluxMagnitudes = null
+        stableMeter = 4
+    }
+
+    fun spectralFluxLevel(
+        fftFrame: FftFrame,
+        minHz: Float,
+        maxHz: Float,
+        gain: Float,
+    ): Float {
+        val previous = previousFluxMagnitudes
+        previousFluxMagnitudes = fftFrame.magnitudes.copyOf()
+        if (previous == null || previous.size != fftFrame.magnitudes.size) return 0f
+
+        val startBin = (minHz / fftFrame.binHz).roundToInt().coerceIn(1, fftFrame.magnitudes.lastIndex)
+        val endBin = (maxHz / fftFrame.binHz).roundToInt().coerceIn(startBin, fftFrame.magnitudes.lastIndex)
+        var flux = 0f
+        var count = 0
+        for (bin in startBin..endBin) {
+            flux += (fftFrame.magnitudes[bin] - previous[bin]).coerceAtLeast(0f)
+            count += 1
+        }
+        if (count == 0) return 0f
+        return (flux / count * gain).coerceIn(0f, 1f)
     }
 
     private fun logTempoDebug(
@@ -624,6 +841,47 @@ private class MicTempoEstimator {
         return weightedAverage.roundToInt()
     }
 
+    private fun estimateMeterFromAccents(): Int {
+        val currentMeter = stableMeter
+        if (stableTempoBpm == null || onsetStrengths.size < 9) return currentMeter
+
+        val strengths = onsetStrengths.takeLast(16)
+        fun scoreMeter(meter: Int): Float {
+            if (strengths.size < meter * 3) return 0f
+            var bestScore = 0f
+            for (phase in 0 until meter) {
+                var downbeatSum = 0f
+                var downbeatCount = 0
+                var otherSum = 0f
+                var otherCount = 0
+                strengths.forEachIndexed { index, strength ->
+                    if (index % meter == phase) {
+                        downbeatSum += strength
+                        downbeatCount += 1
+                    } else {
+                        otherSum += strength
+                        otherCount += 1
+                    }
+                }
+                if (downbeatCount < 3 || otherCount <= 0) continue
+                val downbeatAverage = downbeatSum / downbeatCount
+                val otherAverage = otherSum / otherCount
+                val contrast = (downbeatAverage - otherAverage).coerceAtLeast(0f)
+                val coverage = downbeatCount.coerceAtMost(5) / 5f
+                bestScore = max(bestScore, contrast * coverage)
+            }
+            return bestScore
+        }
+
+        val threeScore = scoreMeter(3)
+        val fourScore = scoreMeter(4)
+        return when {
+            threeScore > 0.0045f && threeScore > fourScore * 1.28f -> 3
+            fourScore > 0.0045f && fourScore > threeScore * 1.18f -> 4
+            else -> currentMeter
+        }
+    }
+
     private fun updateStableTempo(candidateBpm: Int) {
         val currentStable = stableTempoBpm
         if (currentStable != null && abs(candidateBpm - currentStable) <= TEMPO_CLUSTER_TOLERANCE_BPM) {
@@ -648,6 +906,122 @@ private class MicTempoEstimator {
         }
     }
 }
+
+private data class SmartTempoVote(
+    val bpm: Int?,
+    val confidence: Float,
+)
+
+private class AuxiliaryTempoEngine(
+    private val levelThresholdFloor: Float,
+    private val jumpThresholdFloor: Float,
+    private val smoothing: Float,
+) {
+    private val onsetTimesMs = mutableListOf<Long>()
+    private var smoothedLevel = 0f
+    private var previousLevel = 0f
+    private var lastOnsetMs = 0L
+    private var stableTempoBpm: Int? = null
+
+    fun estimate(level: Float, audioTimeMs: Long): Int? {
+        val safeLevel = level.coerceIn(0f, 1f)
+        if (lastOnsetMs > 0L && audioTimeMs - lastOnsetMs > TEMPO_DETECTION_TIMEOUT_MS) {
+            clear()
+        }
+        smoothedLevel = if (smoothedLevel <= 0f) {
+            safeLevel
+        } else {
+            (smoothedLevel * smoothing) + (safeLevel * (1f - smoothing))
+        }
+
+        val levelJump = safeLevel - previousLevel
+        val adaptiveLevelThreshold = max(levelThresholdFloor, smoothedLevel * 1.38f)
+        val adaptiveJumpThreshold = max(jumpThresholdFloor, smoothedLevel * 0.22f)
+        val isOnset = safeLevel > adaptiveLevelThreshold &&
+            levelJump > adaptiveJumpThreshold &&
+            audioTimeMs - lastOnsetMs >= MIN_TEMPO_ONSET_INTERVAL_MS
+
+        previousLevel = safeLevel
+        if (!isOnset) return stableTempoBpm
+
+        lastOnsetMs = audioTimeMs
+        onsetTimesMs += audioTimeMs
+        while (onsetTimesMs.size > TEMPO_ONSET_HISTORY_COUNT) {
+            onsetTimesMs.removeAt(0)
+        }
+        estimateTempoFromIntervals()?.let { nextTempo ->
+            stableTempoBpm = stableTempoBpm?.let { current ->
+                if (abs(current - nextTempo) <= TEMPO_CLUSTER_TOLERANCE_BPM) {
+                    ((current * 0.76f) + (nextTempo * 0.24f)).roundToInt()
+                } else {
+                    nextTempo
+                }
+            } ?: nextTempo
+        }
+        return stableTempoBpm
+    }
+
+    fun clear() {
+        onsetTimesMs.clear()
+        smoothedLevel = 0f
+        previousLevel = 0f
+        lastOnsetMs = 0L
+        stableTempoBpm = null
+    }
+
+    private fun estimateTempoFromIntervals(): Int? {
+        if (onsetTimesMs.size < 4) return null
+        val intervals = onsetTimesMs
+            .zipWithNext { previous, current -> current - previous }
+            .filter { it in MIN_TEMPO_ONSET_INTERVAL_MS..MAX_TEMPO_ONSET_INTERVAL_MS }
+            .takeLast(TEMPO_INTERVAL_WINDOW_COUNT)
+        if (intervals.size < 3) return null
+
+        val candidates = intervals.map { intervalMs ->
+            (60_000f / intervalMs).roundToInt()
+                .normalizedDetectedTempo()
+                .coerceIn(MIN_BPM, MAX_BPM)
+        }
+        val median = candidates.sorted()[candidates.size / 2]
+        val clustered = candidates.filter { bpm -> abs(bpm - median) <= TEMPO_CLUSTER_TOLERANCE_BPM }
+        if (clustered.size < 3) return null
+        return clustered.average().roundToInt()
+    }
+}
+
+private fun combineTempoVotes(
+    strictBpm: Int?,
+    bassBpm: Int?,
+    snareBpm: Int?,
+    fluxBpm: Int?,
+): SmartTempoVote {
+    val votes = listOfNotNull(
+        strictBpm?.let { TempoVote(it, 2.0f) },
+        bassBpm?.let { TempoVote(it, 1.1f) },
+        snareBpm?.let { TempoVote(it, 1.15f) },
+        fluxBpm?.let { TempoVote(it, 1.3f) },
+    )
+    if (votes.isEmpty()) return SmartTempoVote(null, 0f)
+
+    val bestCluster = votes
+        .map { seed ->
+            votes.filter { vote -> abs(vote.bpm - seed.bpm) <= TEMPO_CLUSTER_TOLERANCE_BPM }
+        }
+        .maxByOrNull { cluster -> cluster.sumOf { it.weight.toDouble() } } ?: return SmartTempoVote(null, 0f)
+    val score = bestCluster.sumOf { it.weight.toDouble() }.toFloat()
+    val totalScore = votes.sumOf { it.weight.toDouble() }.toFloat().coerceAtLeast(1f)
+    val confidence = (score / totalScore).coerceIn(0f, 1f)
+    if (score < 2.3f) return SmartTempoVote(strictBpm, confidence * 0.55f)
+
+    val weightedTempo = bestCluster.sumOf { vote -> vote.bpm.toDouble() * vote.weight } /
+        bestCluster.sumOf { vote -> vote.weight.toDouble() }
+    return SmartTempoVote(weightedTempo.roundToInt(), confidence)
+}
+
+private data class TempoVote(
+    val bpm: Int,
+    val weight: Float,
+)
 
 private fun List<Float>.smartAverageOrNull(): Float? {
     if (isEmpty()) return null
@@ -678,6 +1052,15 @@ fun Float.toNoteReading(a4ReferenceHz: Int): Pair<String, Int> {
     return name to cents
 }
 
+private fun Float.estimatedA4Reference(): Float? {
+    if (this <= 0f) return null
+    val nearestMidiAt440 = (69f + 12f * log2(this / DEFAULT_A4_REFERENCE_HZ)).roundToInt()
+    val estimatedReference = this / 2f.pow((nearestMidiAt440 - 69) / 12f)
+    return estimatedReference.takeIf {
+        it in MIN_A4_REFERENCE_HZ.toFloat()..MAX_A4_REFERENCE_HZ.toFloat()
+    }
+}
+
 private fun Int.floorMod(divisor: Int): Int {
     return ((this % divisor) + divisor) % divisor
 }
@@ -689,14 +1072,37 @@ private fun Int.normalizedDetectedTempo(): Int {
     return tempo
 }
 
-private fun buildSpectrum(
-    buffer: ShortArray,
-    sampleCount: Int,
-): List<Float> {
-    return List(SPECTRUM_BAR_COUNT) { index ->
+private fun buildSpectrum(fftFrame: FftFrame): List<Float> {
+    val rawLevels = List(SPECTRUM_BAR_COUNT) { index ->
         val frequency = spectrumFrequencyForIndex(index, SPECTRUM_BAR_COUNT)
-        goertzelLevel(buffer, sampleCount, frequency).coerceIn(0f, 1f)
+        fftMagnitudeAt(fftFrame, frequency)
     }
+    val peak = rawLevels.maxOrNull() ?: 0f
+    if (peak < 0.0006f) return List(SPECTRUM_BAR_COUNT) { 0f }
+
+    val floor = (rawLevels.average().toFloat() * 0.45f).coerceAtMost(peak * 0.72f)
+    val range = (peak - floor).coerceAtLeast(0.0001f)
+    return rawLevels.map { level ->
+        sqrt(((level - floor) / range).coerceIn(0f, 1f))
+    }
+}
+
+private fun fftBandLevel(
+    fftFrame: FftFrame,
+    minHz: Float,
+    maxHz: Float,
+    gain: Float,
+): Float {
+    val startBin = (minHz / fftFrame.binHz).roundToInt().coerceIn(1, fftFrame.magnitudes.lastIndex)
+    val endBin = (maxHz / fftFrame.binHz).roundToInt().coerceIn(startBin, fftFrame.magnitudes.lastIndex)
+    var sum = 0f
+    var count = 0
+    for (bin in startBin..endBin) {
+        sum += fftFrame.magnitudes[bin]
+        count += 1
+    }
+    if (count == 0) return 0f
+    return (sum / count * gain).coerceIn(0f, 1f)
 }
 
 fun List<Float>.peakSpectrumReading(): SpectrumPeak? {
@@ -748,26 +1154,90 @@ private fun spectrumFrequencyForIndex(
     return 30f * (10_000f / 30f).pow(progress)
 }
 
-private fun goertzelLevel(
-    buffer: ShortArray,
-    sampleCount: Int,
+private fun fftMagnitudeAt(
+    fftFrame: FftFrame,
     frequency: Float,
 ): Float {
-    val omega = 2.0 * PI * frequency / AUDIO_SAMPLE_RATE
-    val coefficient = 2.0 * cos(omega)
-    var q0: Double
-    var q1 = 0.0
-    var q2 = 0.0
+    val bin = (frequency / fftFrame.binHz).roundToInt().coerceIn(1, fftFrame.magnitudes.lastIndex)
+    return fftFrame.magnitudes[bin]
+}
 
-    for (index in 0 until sampleCount) {
-        q0 = coefficient * q1 - q2 + (buffer[index] / Short.MAX_VALUE.toDouble())
-        q2 = q1
-        q1 = q0
+private fun buildFftFrame(
+    buffer: ShortArray,
+    sampleCount: Int,
+): FftFrame {
+    val size = AUDIO_FRAME_SIZE
+    val real = FloatArray(size)
+    val imaginary = FloatArray(size)
+    val usableSamples = sampleCount.coerceIn(1, size)
+    for (index in 0 until usableSamples) {
+        val window = (0.5f - 0.5f * cos((2.0 * PI * index) / (size - 1)).toFloat())
+        real[index] = (buffer[index] / Short.MAX_VALUE.toFloat()) * window
     }
 
-    val power = q1 * q1 + q2 * q2 - coefficient * q1 * q2
-    val magnitude = (sqrt(power).toFloat() * 2f / sampleCount).coerceAtLeast(0f)
-    return (magnitude * 10f).coerceIn(0f, 1f)
+    fft(real, imaginary)
+
+    val magnitudes = FloatArray(size / 2)
+    for (bin in magnitudes.indices) {
+        magnitudes[bin] = (sqrt(real[bin] * real[bin] + imaginary[bin] * imaginary[bin]) * 2f / size)
+            .coerceAtLeast(0f)
+    }
+    return FftFrame(
+        magnitudes = magnitudes,
+        binHz = AUDIO_SAMPLE_RATE.toFloat() / size,
+    )
+}
+
+private fun fft(
+    real: FloatArray,
+    imaginary: FloatArray,
+) {
+    val size = real.size
+    var j = 0
+    for (i in 1 until size) {
+        var bit = size shr 1
+        while (j and bit != 0) {
+            j = j xor bit
+            bit = bit shr 1
+        }
+        j = j xor bit
+        if (i < j) {
+            val tempReal = real[i]
+            real[i] = real[j]
+            real[j] = tempReal
+            val tempImaginary = imaginary[i]
+            imaginary[i] = imaginary[j]
+            imaginary[j] = tempImaginary
+        }
+    }
+
+    var length = 2
+    while (length <= size) {
+        val angle = (-2.0 * PI / length).toFloat()
+        val wLengthReal = cos(angle)
+        val wLengthImaginary = sin(angle)
+        var start = 0
+        while (start < size) {
+            var wReal = 1f
+            var wImaginary = 0f
+            val halfLength = length / 2
+            for (offset in 0 until halfLength) {
+                val evenIndex = start + offset
+                val oddIndex = evenIndex + halfLength
+                val oddReal = real[oddIndex] * wReal - imaginary[oddIndex] * wImaginary
+                val oddImaginary = real[oddIndex] * wImaginary + imaginary[oddIndex] * wReal
+                real[oddIndex] = real[evenIndex] - oddReal
+                imaginary[oddIndex] = imaginary[evenIndex] - oddImaginary
+                real[evenIndex] += oddReal
+                imaginary[evenIndex] += oddImaginary
+                val nextWReal = wReal * wLengthReal - wImaginary * wLengthImaginary
+                wImaginary = wReal * wLengthImaginary + wImaginary * wLengthReal
+                wReal = nextWReal
+            }
+            start += length
+        }
+        length = length shl 1
+    }
 }
 
 private fun Float.debugLevel(): String {

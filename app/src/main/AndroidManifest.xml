@@ -60,7 +60,7 @@
             android:name=".presentation.BpmMunkzTileService"
             android:description="@string/tile_description"
             android:exported="true"
-            android:icon="@drawable/bpm_munkz_app_logo_free"
+            android:icon="@drawable/bpm_munkz_app_logo_metronome"
             android:label="@string/tile_label"
             android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
             <intent-filter>
@@ -74,7 +74,7 @@
         <service
             android:name=".presentation.LatestBpmComplicationDataSourceService"
             android:exported="true"
-            android:icon="@drawable/bpm_munkz_app_logo_free"
+            android:icon="@drawable/bpm_munkz_app_logo_metronome"
             android:label="@string/complication_latest_bpm"
             android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
             <intent-filter>
@@ -91,7 +91,7 @@
         <service
             android:name=".presentation.LatestKeyComplicationDataSourceService"
             android:exported="true"
-            android:icon="@drawable/bpm_munkz_app_logo_free"
+            android:icon="@drawable/bpm_munkz_app_logo_metronome"
             android:label="@string/complication_latest_key"
             android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
             <intent-filter>

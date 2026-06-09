@@ -2,6 +2,8 @@ package bpm.munkz.pulse_wear.os.bpm.presentation
 
 internal const val PULSE_PAGE_COUNT = 4
 internal const val TUNE_PAGE_COUNT = 4
+internal const val RHYTHM_PAGE_COUNT = 2
+internal const val PLAYLIST_PAGE_COUNT = 2
 internal const val RHYTHM_VISUAL_MAX_DELAY_MS = 24L
 internal const val RHYTHM_VISUAL_WAKE_AHEAD_MS = 6L
 
