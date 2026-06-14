@@ -83,6 +83,7 @@ internal fun PlaylistClockPage(
     clockImageResId: Int,
     clockColorArgb: Int,
     forceSimpleRhythm: Boolean = false,
+    editEnabled: Boolean = true,
     onPreviousSong: () -> Unit,
     onNextSong: () -> Unit,
     onEditPlaylist: () -> Unit,
@@ -186,6 +187,7 @@ internal fun PlaylistClockPage(
                         .width(editButtonWidth)
                         .height(24.dp),
                     fontSize = editButtonFontSize,
+                    enabled = editEnabled,
                     onClick = onEditPlaylist,
                 )
             }

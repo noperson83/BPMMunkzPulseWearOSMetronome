@@ -74,8 +74,10 @@ internal fun TapTempoFree(
     isAccentFlash: Boolean,
     isRunning: Boolean,
     showAudioTools: Boolean = true,
+    audioToolsEnabled: Boolean = true,
     showRhythmChoices: Boolean = true,
     showTimeSignatureReadout: Boolean = false,
+    keyEnabled: Boolean = true,
     onOpenTuner: () -> Unit,
     onOpenSpectrum: () -> Unit,
     onTapTempo: () -> Unit,
@@ -149,6 +151,7 @@ internal fun TapTempoFree(
                         appText = appText,
                         onOpenTuner = onOpenTuner,
                         onOpenSpectrum = onOpenSpectrum,
+                        enabled = audioToolsEnabled,
                         modifier = if (watchSClass) Modifier
                             .width(156.dp)
                             .height(21.dp) else Modifier,
@@ -182,6 +185,7 @@ internal fun TapTempoFree(
                     fontSize = bottomChoiceFontSize,
                     selected = false,
                     prominent = false,
+                    enabled = keyEnabled,
                     onClick = onKeyClick,
                 )
             }
@@ -412,6 +416,8 @@ internal fun RhythmSetupPage(
     beatVisualsEnabled: Boolean,
     beatRingVisible: Boolean,
     showAudioTools: Boolean = true,
+    audioToolsEnabled: Boolean = true,
+    editEnabled: Boolean = true,
     onEditRhythm: () -> Unit,
     onToggleRunning: () -> Unit,
     onBpmClick: () -> Unit,
@@ -478,6 +484,8 @@ internal fun RhythmSetupPage(
             audioButtonHeight = if (watchSClass) 20.dp else 21.dp,
             audioButtonFontSize = if (watchSClass) 9.sp else 10.sp,
             showAudioTools = showAudioTools,
+            audioToolsEnabled = audioToolsEnabled,
+            editEnabled = editEnabled,
             startButtonWidth = if (watchSClass) 100.dp else 112.dp,
             startButtonHeight = if (watchSClass) 31.dp else 36.dp,
             startButtonFontSize = if (watchSClass) 13.sp else 15.sp,
@@ -539,6 +547,8 @@ private fun RhythmLiveCanvas(
     audioButtonHeight: Dp = 21.dp,
     audioButtonFontSize: TextUnit = 10.sp,
     showAudioTools: Boolean = true,
+    audioToolsEnabled: Boolean = true,
+    editEnabled: Boolean = true,
     startButtonWidth: Dp = 112.dp,
     startButtonHeight: Dp = 36.dp,
     startButtonFontSize: TextUnit = 15.sp,
@@ -604,6 +614,7 @@ private fun RhythmLiveCanvas(
                             fontSize = audioButtonFontSize,
                             selected = false,
                             prominent = false,
+                            enabled = audioToolsEnabled,
                             onClick = onOpenTuner,
                         )
                     }
@@ -626,6 +637,7 @@ private fun RhythmLiveCanvas(
                             fontSize = audioButtonFontSize,
                             selected = false,
                             prominent = false,
+                            enabled = audioToolsEnabled,
                             onClick = onOpenSpectrum,
                         )
                     }
@@ -661,6 +673,7 @@ private fun RhythmLiveCanvas(
                             .width(editButtonWidth)
                             .height(editButtonHeight),
                         fontSize = editButtonFontSize,
+                        enabled = editEnabled,
                         onClick = onEdit,
                     )
                 }
@@ -1817,6 +1830,7 @@ internal fun AudioToolButtons(
     appText: AppText,
     onOpenTuner: () -> Unit,
     onOpenSpectrum: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1832,6 +1846,7 @@ internal fun AudioToolButtons(
             fontSize = 10.sp,
             selected = false,
             prominent = false,
+            enabled = enabled,
             onClick = onOpenTuner,
         )
 
@@ -1843,6 +1858,7 @@ internal fun AudioToolButtons(
             fontSize = 10.sp,
             selected = false,
             prominent = false,
+            enabled = enabled,
             onClick = onOpenSpectrum,
         )
     }

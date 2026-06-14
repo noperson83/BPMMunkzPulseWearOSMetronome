@@ -34,7 +34,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 
-private const val TILE_LOGO_RESOURCE_ID = "bpm_munkz_tile_logo_metronome_v1"
+private const val TILE_LOGO_RESOURCE_ID = "bpm_munkz_tile_logo_v2"
 
 @ProtoLayoutExperimental
 class BpmMunkzTileService : TileService() {
@@ -75,7 +75,7 @@ class BpmMunkzTileService : TileService() {
                                     .setHorizontalAlignment(HORIZONTAL_ALIGN_CENTER)
                                     .addContent(
                                         Image.Builder(requestParams.scope)
-                                            .setImageResource(tileLogoResource(), TILE_LOGO_RESOURCE_ID)
+                                            .setImageResource(tileLogoResource(packageName), TILE_LOGO_RESOURCE_ID)
                                             .setWidth(dp(158f))
                                             .setHeight(dp(158f))
                                             .setContentScaleMode(CONTENT_SCALE_MODE_FIT)
@@ -133,14 +133,25 @@ class BpmMunkzTileService : TileService() {
     }
 }
 
-private fun tileLogoResource(): ImageResource =
+private fun tileLogoResource(packageName: String): ImageResource =
     ImageResource.Builder()
         .setAndroidResourceByResId(
             AndroidImageResourceByResId.Builder()
-                .setResourceId(R.drawable.bpm_munkz_app_logo_metronome)
+                .setResourceId(tileLogoResIdForPackage(packageName))
                 .build(),
         )
         .build()
+
+private fun tileLogoResIdForPackage(packageName: String): Int {
+    return when {
+        packageName.endsWith(".bpm") ||
+            packageName.endsWith(".tune") ||
+            packageName.endsWith(".rhythm") ||
+            packageName.endsWith(".playlist") ||
+            packageName.endsWith(".pro") -> R.drawable.bpm_munkz_app_logo_free
+        else -> R.drawable.bpm_munkz_app_logo_edition
+    }
+}
 
 private fun <T> immediateFuture(value: T): ListenableFuture<T> = ImmediateListenableFuture(value)
 

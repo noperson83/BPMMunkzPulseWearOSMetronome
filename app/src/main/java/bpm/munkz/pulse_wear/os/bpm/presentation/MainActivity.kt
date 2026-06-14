@@ -479,6 +479,11 @@ fun WearApp(
     openSpectrumRequest: Boolean = false,
     onOpenSpectrumRequestConsumed: () -> Unit = {},
 ) {
+    val context = LocalContext.current
+    val launchLogoResId = remember(context.packageName) {
+        launchLogoResIdForPackage(context.packageName)
+    }
+
     BPMMunkzPulseTheme {
         var showLaunchSplash by rememberSaveable { mutableStateOf(true) }
 
@@ -488,7 +493,7 @@ fun WearApp(
         }
 
         if (showLaunchSplash) {
-            AppLaunchSplashScreen()
+            AppLaunchSplashScreen(logoResId = launchLogoResId)
         } else {
             AppScaffold {
                 BeatPulseScreen(
@@ -505,7 +510,7 @@ private fun Intent?.shouldOpenSpectrum(): Boolean {
 }
 
 @Composable
-private fun AppLaunchSplashScreen() {
+private fun AppLaunchSplashScreen(logoResId: Int) {
     val logoScale = remember { Animatable(1.38f) }
 
     LaunchedEffect(Unit) {
@@ -526,13 +531,24 @@ private fun AppLaunchSplashScreen() {
         contentAlignment = Alignment.Center,
     ) {
         Image(
-            painter = painterResource(id = R.drawable.bpm_munkz_app_logo_metronome),
+            painter = painterResource(id = logoResId),
             contentDescription = "BPM Munkz Pulse",
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxSize(0.82f)
                 .scale(logoScale.value),
         )
+    }
+}
+
+private fun launchLogoResIdForPackage(packageName: String): Int {
+    return when {
+        packageName.endsWith(".bpm") ||
+            packageName.endsWith(".tune") ||
+            packageName.endsWith(".rhythm") ||
+            packageName.endsWith(".playlist") ||
+            packageName.endsWith(".pro") -> R.drawable.bpm_munkz_app_logo_free
+        else -> R.drawable.bpm_munkz_app_logo_edition
     }
 }
 
@@ -691,7 +707,9 @@ fun BeatPulseScreen(
     var spectrumReaderMode by rememberSaveable { mutableStateOf(SpectrumReaderMode.Instrument) }
     var spectrumTuningChoice by rememberSaveable { mutableStateOf<SpectrumTuningChoice?>(null) }
     val tapTempoTimes = remember { mutableListOf<Long>() }
-    val appFeatures = AppEditionConfig.features
+    val appFeatures = remember(context.packageName) {
+        AppEditionConfig.featuresFor(context.packageName)
+    }
     val pagerState = rememberPagerState(pageCount = { appFeatures.pageCount })
     val pagerScope = rememberCoroutineScope()
     var tunePageIndex by rememberSaveable { mutableIntStateOf(TUNE_TUNER_PAGE_INDEX) }
@@ -750,10 +768,11 @@ fun BeatPulseScreen(
         }
     }
 
+    val activeAudioReaderMode = if (fftOverlayOpen) SpectrumReaderMode.Song else spectrumReaderMode
     val audioAnalysisState = rememberAudioAnalysisState(
         enabled = micPermissionGranted && (audioOverlayOpen || tuneAudioOpen) && !isPreview && !appFeatures.isFreeOnly,
         listenProfile = tunerListenProfile,
-        readerMode = spectrumReaderMode,
+        readerMode = activeAudioReaderMode,
         tuningChoice = spectrumTuningChoice,
         a4ReferenceHz = a4ReferenceHz,
         includeSpectrum = spectrumOverlayOpen || fftOverlayOpen ||
@@ -1634,6 +1653,7 @@ fun BeatPulseScreen(
                             },
                             onSaveToClock = { _, _ -> },
                             onOpenFft = {
+                                spectrumReaderMode = SpectrumReaderMode.Song
                                 fftOverlayOpen = true
                             },
                             onRequestMicPermission = {
@@ -1978,13 +1998,14 @@ fun BeatPulseScreen(
                         playlist = currentPlaylist,
                         songIndex = songIndex,
                         isRunning = isRunning,
-                        beatClockStartedAtMs = beatClockStartedAtMs,
-                        playbackStartedAtMs = playbackStartedAtMs,
-                        clockImageResId = clockImageResId,
-                        clockColorArgb = clockColorArgb,
-                        onPreviousSong = { selectSong(songIndex - 1) },
-                        onNextSong = { selectSong(songIndex + 1) },
-                        onEditPlaylist = {
+                            beatClockStartedAtMs = beatClockStartedAtMs,
+                            playbackStartedAtMs = playbackStartedAtMs,
+                            clockImageResId = clockImageResId,
+                            clockColorArgb = clockColorArgb,
+                            editEnabled = !appFeatures.isProFree,
+                            onPreviousSong = { selectSong(songIndex - 1) },
+                            onNextSong = { selectSong(songIndex + 1) },
+                            onEditPlaylist = {
                             playlistEditorPopupOpen = true
                         },
                         onToggleRunning = toggleRunning,
@@ -2009,6 +2030,8 @@ fun BeatPulseScreen(
                         beatRingVisible = pageShowsRhythmPulse(pagerState.currentPage) &&
                             !pagerState.isScrollInProgress &&
                             abs(pagerState.currentPageOffsetFraction) <= 0.01f,
+                        audioToolsEnabled = !appFeatures.isProFree,
+                        editEnabled = !appFeatures.isProFree,
                         onEditRhythm = {
                             rhythmEditorPopupOpen = true
                         },
@@ -2049,6 +2072,19 @@ fun BeatPulseScreen(
                     bigRingFlashMode = bigRingFlashMode,
                     appLanguage = appLanguage,
                     appCpuUsagePercent = appCpuUsagePercent,
+                    showBuyNowButton = appFeatures.isProFree,
+                    settingsEnabled = !appFeatures.isProFree,
+                    showRhythmPresetSettings = !appFeatures.isProFree,
+                    trialStatusText = freeSettingsTrialState.statusText,
+                    trialButtonText = freeSettingsTrialState.buttonText,
+                    trialButtonEnabled = freeSettingsTrialState.buttonEnabled,
+                    onStartTrial = {
+                        val startDay = currentEpochDay()
+                        freeSettingsTrialStartedDay = startDay
+                        if (!isPreview) {
+                            context.saveSettingsLong(FREE_SETTINGS_TRIAL_STARTED_DAY_KEY, startDay)
+                        }
+                    },
                     onHapticsToggle = {
                         val nextHapticsEnabled = !hapticsEnabled
                         val nextState = metronomeState.copy(hapticsEnabled = nextHapticsEnabled)
@@ -2220,6 +2256,8 @@ fun BeatPulseScreen(
                         isRunning = isRunning,
                         showAudioTools = appFeatures.showTunerEntry || appFeatures.showSpectrumEntry,
                         showRhythmChoices = appFeatures.showTapRhythmChoices,
+                        audioToolsEnabled = !appFeatures.isProFree,
+                        keyEnabled = !appFeatures.isProFree,
                         onOpenTuner = { tunerOverlayOpen = true },
                         onOpenSpectrum = { spectrumOverlayOpen = true },
                         onTapTempo = recordTapTempo,
@@ -2707,6 +2745,7 @@ fun BeatPulseScreen(
                             }
                         },
                         onOpenFft = {
+                            spectrumReaderMode = SpectrumReaderMode.Song
                             spectrumOverlayOpen = false
                             fftOverlayOpen = true
                         },
@@ -2749,7 +2788,7 @@ fun BeatPulseScreen(
                         appText = appText,
                         audioAnalysisState = audioAnalysisState,
                         selectedProfile = tunerListenProfile,
-                        selectedReaderMode = spectrumReaderMode,
+                        selectedReaderMode = activeAudioReaderMode,
                         a4ReferenceHz = a4ReferenceHz,
                         micPermissionGranted = micPermissionGranted,
                         onRequestMicPermission = {
@@ -2876,20 +2915,22 @@ internal fun GlassCommandButton(
     circular: Boolean = false,
     selected: Boolean = false,
     prominent: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val shape = if (circular) CircleShape else RoundedCornerShape(50)
+    val enabledAlpha = if (enabled) 1f else 0.34f
     val buttonColor = if (prominent) {
-        MaterialTheme.colorScheme.primary.copy(alpha = if (selected) 0.92f else 0.78f)
+        MaterialTheme.colorScheme.primary.copy(alpha = (if (selected) 0.92f else 0.78f) * enabledAlpha)
     } else if (selected) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.34f)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.34f * enabledAlpha)
     } else {
-        Color.White.copy(alpha = 0.13f)
+        Color.White.copy(alpha = 0.13f * enabledAlpha)
     }
     val borderColor = if (prominent || selected) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.95f)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.95f * enabledAlpha)
     } else {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.58f)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.58f * enabledAlpha)
     }
 
     Box(
@@ -2901,7 +2942,7 @@ internal fun GlassCommandButton(
                 color = borderColor,
                 shape = shape,
             )
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -2912,7 +2953,7 @@ internal fun GlassCommandButton(
                 MaterialTheme.colorScheme.onPrimary
             } else {
                 MaterialTheme.colorScheme.onBackground
-            },
+            }.copy(alpha = enabledAlpha),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,

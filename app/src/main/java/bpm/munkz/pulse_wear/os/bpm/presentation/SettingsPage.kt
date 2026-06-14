@@ -379,6 +379,7 @@ internal fun SimpleSettingsPage(
         val tightSpacing = if (watchSClass) 3.dp else 4.dp
         val sectionSpacing = if (watchSClass) 7.dp else 9.dp
         val scrollIndicatorHeight = if (watchSClass) 104.dp else 118.dp
+        val enabledAlpha = if (settingsEnabled) 1f else 0.34f
 
         Column(
             modifier = Modifier
@@ -521,7 +522,7 @@ internal fun SimpleSettingsPage(
                 text = appText.theme,
                 fontSize = sectionTitleFontSize,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = enabledAlpha),
             )
 
             Spacer(modifier = Modifier.height(tightSpacing))
@@ -529,7 +530,7 @@ internal fun SimpleSettingsPage(
             Text(
                 text = appText.mainColor,
                 fontSize = labelFontSize,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
             )
             Spacer(modifier = Modifier.height(tightSpacing))
             ColorPickerRow(
@@ -1176,6 +1177,12 @@ internal fun SettingsPage(
     appCpuUsagePercent: Float?,
     compactSettings: Boolean = false,
     showBuyNowButton: Boolean = false,
+    settingsEnabled: Boolean = true,
+    showRhythmPresetSettings: Boolean = true,
+    trialStatusText: String = "Settings locked",
+    trialButtonText: String = "30 Day Trial",
+    trialButtonEnabled: Boolean = true,
+    onStartTrial: () -> Unit = {},
     onHapticsToggle: () -> Unit,
     onBeepToggle: () -> Unit,
     onBeatSoundModeChoice: (BeatSoundMode) -> Unit,
@@ -1209,10 +1216,11 @@ internal fun SettingsPage(
             appLanguage = appLanguage,
             appCpuUsagePercent = appCpuUsagePercent,
             showBuyNowButton = showBuyNowButton,
-            settingsEnabled = true,
-            trialStatusText = "Settings unlocked",
-            trialButtonText = "30 Day Trial",
-            trialButtonEnabled = false,
+            settingsEnabled = settingsEnabled,
+            trialStatusText = trialStatusText,
+            trialButtonText = trialButtonText,
+            trialButtonEnabled = trialButtonEnabled,
+            onStartTrial = onStartTrial,
             onHapticsToggle = onHapticsToggle,
             onBeepToggle = onBeepToggle,
             onBeatSoundModeChoice = onBeatSoundModeChoice,
@@ -1227,6 +1235,7 @@ internal fun SettingsPage(
     }
 
     var intensityPickerOpen by rememberSaveable { mutableStateOf(false) }
+    var buyNowPopupOpen by rememberSaveable { mutableStateOf(false) }
     val settingsScrollState = rememberScrollState()
 
     BoxWithConstraints(
@@ -1246,6 +1255,7 @@ internal fun SettingsPage(
         val smallSpacing = if (watchSClass) 4.dp else 5.dp
         val sectionSpacing = if (watchSClass) 7.dp else 10.dp
         val scrollIndicatorHeight = if (watchSClass) 104.dp else 118.dp
+        val enabledAlpha = if (settingsEnabled) 1f else 0.34f
 
         Column(
             modifier = Modifier
@@ -1257,10 +1267,27 @@ internal fun SettingsPage(
                 text = appText.settings,
                 fontSize = titleFontSize,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = enabledAlpha),
             )
 
             Spacer(modifier = Modifier.height(smallSpacing))
+
+            if (showBuyNowButton) {
+                SettingsCommandButton(
+                    text = "Buy Now",
+                    modifier = Modifier
+                        .width(96.dp)
+                        .height(24.dp),
+                    fontSize = 11.sp,
+                    prominent = true,
+                    enabled = true,
+                    onClick = {
+                        buyNowPopupOpen = true
+                    },
+                )
+
+                Spacer(modifier = Modifier.height(smallSpacing))
+            }
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1272,6 +1299,7 @@ internal fun SettingsPage(
                     modifier = Modifier
                         .width(choiceWidth)
                         .height(choiceHeight),
+                    enabled = settingsEnabled,
                     onClick = onHapticsToggle,
                 )
 
@@ -1281,6 +1309,7 @@ internal fun SettingsPage(
                     modifier = Modifier
                         .width(choiceWidth)
                         .height(choiceHeight),
+                    enabled = settingsEnabled,
                     onClick = onBeepToggle,
                 )
 
@@ -1290,6 +1319,7 @@ internal fun SettingsPage(
                     modifier = Modifier
                         .width(choiceWidth)
                         .height(choiceHeight),
+                    enabled = settingsEnabled,
                     onClick = { onBeatSoundModeChoice(BeatSoundMode.Wood) },
                 )
 
@@ -1299,27 +1329,31 @@ internal fun SettingsPage(
                     modifier = Modifier
                         .width(choiceWidth)
                         .height(choiceHeight),
+                    enabled = settingsEnabled,
                     onClick = { onBeatSoundModeChoice(BeatSoundMode.Bell) },
                 )
             }
 
             Spacer(modifier = Modifier.height(if (watchSClass) 5.dp else 7.dp))
 
-            RhythmPresetButtons(
-                beatsPerMeasure = beatsPerMeasure,
-                beatAccentTypes = beatAccentTypes,
-                buttonWidth = if (watchSClass) 38.dp else 42.dp,
-                buttonHeight = choiceHeight,
-                onPresetChoice = onRhythmPresetChoice,
-            )
+            if (showRhythmPresetSettings) {
+                RhythmPresetButtons(
+                    beatsPerMeasure = beatsPerMeasure,
+                    beatAccentTypes = beatAccentTypes,
+                    buttonWidth = if (watchSClass) 38.dp else 42.dp,
+                    buttonHeight = choiceHeight,
+                    enabled = settingsEnabled,
+                    onPresetChoice = onRhythmPresetChoice,
+                )
 
-            Spacer(modifier = Modifier.height(if (watchSClass) 5.dp else 7.dp))
+                Spacer(modifier = Modifier.height(if (watchSClass) 5.dp else 7.dp))
+            }
 
             Text(
                 text = appText.intensityTitle.replace('\n', ' '),
                 fontSize = labelFontSize,
                 textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
                 maxLines = 1,
             )
 
@@ -1328,6 +1362,7 @@ internal fun SettingsPage(
             AccentIntensityPicker(
                 accentIntensityRanges = accentIntensityRanges,
                 appLanguage = appLanguage,
+                enabled = settingsEnabled,
                 onClick = {
                     intensityPickerOpen = true
                 },
@@ -1342,6 +1377,7 @@ internal fun SettingsPage(
                 PercentStepperControl(
                     label = appText.droneVolume,
                     valuePercent = keyDroneVolumePercent,
+                    enabled = settingsEnabled,
                     onValueChange = onKeyDroneVolumeChange,
                 )
 
@@ -1352,6 +1388,7 @@ internal fun SettingsPage(
                         .width(42.dp)
                         .width(choiceWidth)
                         .height(choiceHeight),
+                    enabled = settingsEnabled,
                     onClick = onKeyDroneToggle,
                 )
             }
@@ -1361,6 +1398,7 @@ internal fun SettingsPage(
             A4ReferenceControl(
                 label = appText.a4Reference,
                 referenceHz = a4ReferenceHz,
+                enabled = settingsEnabled,
                 onReferenceHzChange = onA4ReferenceHzChange,
             )
 
@@ -1369,6 +1407,7 @@ internal fun SettingsPage(
             MillisecondStepperControl(
                 label = appText.visualNudge,
                 valueMs = tempoNudgeMs,
+                enabled = settingsEnabled,
                 onValueChange = onTempoNudgeChange,
             )
 
@@ -1378,7 +1417,7 @@ internal fun SettingsPage(
                 text = appText.keepScreenOn,
                 fontSize = labelFontSize,
                 textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
             )
 
             Spacer(modifier = Modifier.height(tightSpacing))
@@ -1386,6 +1425,7 @@ internal fun SettingsPage(
             KeepScreenModeButtons(
                 selectedMode = keepScreenMode,
                 appText = appText,
+                enabled = settingsEnabled,
                 onModeChoice = onKeepScreenModeChoice,
             )
 
@@ -1410,6 +1450,7 @@ internal fun SettingsPage(
 
             ColorPickerRow(
                 selectedColorArgb = mainColorArgb,
+                enabled = settingsEnabled,
                 onColorChoice = onMainColorChoice,
                 colorOptions = ThemeMainColorOptions,
             )
@@ -1419,13 +1460,14 @@ internal fun SettingsPage(
             Text(
                 text = appText.backgroundColor,
                 fontSize = labelFontSize,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
             )
 
             Spacer(modifier = Modifier.height(tightSpacing))
 
             ColorPickerRow(
                 selectedColorArgb = backgroundColorArgb,
+                enabled = settingsEnabled,
                 onColorChoice = onBackgroundColorChoice,
                 colorOptions = ThemeBackgroundColorOptions,
             )
@@ -1435,13 +1477,14 @@ internal fun SettingsPage(
             Text(
                 text = appText.bigRing,
                 fontSize = labelFontSize,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
             )
 
             Spacer(modifier = Modifier.height(tightSpacing))
 
             ColorPickerRow(
                 selectedColorArgb = ringColorArgb,
+                enabled = settingsEnabled,
                 onColorChoice = onRingColorChoice,
             )
 
@@ -1450,6 +1493,7 @@ internal fun SettingsPage(
             BigRingModePicker(
                 selectedMode = bigRingFlashMode,
                 appLanguage = appLanguage,
+                enabled = settingsEnabled,
                 onModeChoice = onBigRingModeChoice,
             )
 
@@ -1459,7 +1503,7 @@ internal fun SettingsPage(
                 text = appText.clock,
                 fontSize = sectionTitleFontSize,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = enabledAlpha),
             )
 
             Spacer(modifier = Modifier.height(smallSpacing))
@@ -1467,13 +1511,14 @@ internal fun SettingsPage(
             Text(
                 text = appText.handColor,
                 fontSize = labelFontSize,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
             )
 
             Spacer(modifier = Modifier.height(tightSpacing))
 
             ColorPickerRow(
                 selectedColorArgb = clockColorArgb,
+                enabled = settingsEnabled,
                 onColorChoice = onClockColorChoice,
             )
 
@@ -1482,7 +1527,7 @@ internal fun SettingsPage(
             Text(
                 text = appText.clockImage,
                 fontSize = labelFontSize,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
             )
 
             Spacer(modifier = Modifier.height(tightSpacing))
@@ -1490,6 +1535,7 @@ internal fun SettingsPage(
             ClockImagePicker(
                 selectedIndex = clockImageIndex,
                 appLanguage = appLanguage,
+                enabled = settingsEnabled,
                 onClockImageChoice = onClockImageChoice,
             )
 
@@ -1498,13 +1544,14 @@ internal fun SettingsPage(
             Text(
                 text = appText.language,
                 fontSize = labelFontSize,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
             )
 
             Spacer(modifier = Modifier.height(tightSpacing))
 
             LanguagePicker(
                 selectedLanguage = appLanguage,
+                enabled = settingsEnabled,
                 onLanguageChoice = onLanguageChoice,
             )
 
@@ -1547,6 +1594,21 @@ internal fun SettingsPage(
                 },
                 onDismiss = {
                     intensityPickerOpen = false
+                },
+            )
+        }
+
+        if (buyNowPopupOpen) {
+            BuyNowChoicePopup(
+                trialStatusText = trialStatusText,
+                trialButtonText = trialButtonText,
+                trialButtonEnabled = trialButtonEnabled,
+                onStartTrial = {
+                    onStartTrial()
+                    buyNowPopupOpen = false
+                },
+                onDismiss = {
+                    buyNowPopupOpen = false
                 },
             )
         }
@@ -1765,8 +1827,10 @@ private fun PercentStepperControl(
 private fun MillisecondStepperControl(
     label: String,
     valueMs: Int,
+    enabled: Boolean = true,
     onValueChange: (Int) -> Unit,
 ) {
+    val enabledAlpha = if (enabled) 1f else 0.34f
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -1774,7 +1838,7 @@ private fun MillisecondStepperControl(
             text = label,
             fontSize = 11.sp,
             textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
             maxLines = 1,
         )
 
@@ -1790,6 +1854,7 @@ private fun MillisecondStepperControl(
                     .width(24.dp)
                     .height(22.dp),
                 fontSize = 11.sp,
+                enabled = enabled,
                 onClick = {
                     if (valueMs > MIN_TEMPO_NUDGE_MS) {
                         onValueChange(-TEMPO_NUDGE_STEP_MS)
@@ -1802,7 +1867,7 @@ private fun MillisecondStepperControl(
                 modifier = Modifier.width(62.dp),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = enabledAlpha),
                 textAlign = TextAlign.Center,
                 maxLines = 1,
             )
@@ -1813,6 +1878,7 @@ private fun MillisecondStepperControl(
                     .width(24.dp)
                     .height(22.dp),
                 fontSize = 11.sp,
+                enabled = enabled,
                 onClick = {
                     if (valueMs < MAX_TEMPO_NUDGE_MS) {
                         onValueChange(TEMPO_NUDGE_STEP_MS)
@@ -2096,6 +2162,7 @@ private fun KeepScreenModeButtons(
                 onClick = { onModeChoice(mode) },
             )
         }
+
     }
 }
 
