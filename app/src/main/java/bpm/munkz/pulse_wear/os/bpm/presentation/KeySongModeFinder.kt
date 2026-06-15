@@ -42,9 +42,14 @@ private val TunerScaleProfiles = listOf(
 data class KeyAnalysis(
     val recentNotes: List<String>,
     val guessedKey: String?,
+    val keyConfidence: Float = 0f,
     val likelyChords: List<String>,
+    val chordConfidence: Float = 0f,
+    val alternateChord: String? = null,
     val chordTones: List<String>,
     val chordProgression: List<String> = emptyList(),
+    val phraseLengthBars: Int? = null,
+    val phraseConfidence: Float = 0f,
     val scalarConfidence: Float = 0f,
     val leadScaleKey: String? = null,
 )
@@ -188,35 +193,35 @@ private val TunerChordTemplates = listOf(
         suffix = "m7b5",
         offsets = listOf(0, 3, 6, 10),
         weights = listOf(3.2f, 2.1f, 3.0f, 2.2f),
-        requiredOffsets = listOf(0, 6, 10),
+        requiredOffsets = listOf(0, 3, 6, 10),
         colorOffsets = listOf(6, 10),
     ),
     ChordTemplate(
         suffix = "dim7",
         offsets = listOf(0, 3, 6, 9),
         weights = listOf(3.1f, 2.0f, 3.0f, 2.4f),
-        requiredOffsets = listOf(0, 6, 9),
+        requiredOffsets = listOf(0, 3, 6, 9),
         colorOffsets = listOf(6, 9),
     ),
     ChordTemplate(
         suffix = "aug7",
         offsets = listOf(0, 4, 8, 10),
         weights = listOf(3.2f, 2.2f, 3.2f, 2.2f),
-        requiredOffsets = listOf(0, 8, 10),
+        requiredOffsets = listOf(0, 4, 8, 10),
         colorOffsets = listOf(8, 10),
     ),
     ChordTemplate(
         suffix = "dim",
         offsets = listOf(0, 3, 6),
         weights = listOf(3.0f, 2.0f, 3.0f),
-        requiredOffsets = listOf(0, 6),
+        requiredOffsets = listOf(0, 3, 6),
         colorOffsets = listOf(6),
     ),
     ChordTemplate(
         suffix = "aug",
         offsets = listOf(0, 4, 8),
         weights = listOf(3.0f, 2.0f, 3.0f),
-        requiredOffsets = listOf(0, 8),
+        requiredOffsets = listOf(0, 4, 8),
         colorOffsets = listOf(8),
     ),
     ChordTemplate(
@@ -237,14 +242,14 @@ private val TunerChordTemplates = listOf(
         suffix = "m",
         offsets = listOf(0, 3, 7),
         weights = listOf(3.0f, 2.0f, 1.6f),
-        requiredOffsets = listOf(0),
+        requiredOffsets = listOf(0, 3),
         colorOffsets = emptyList(),
     ),
     ChordTemplate(
         suffix = "",
         offsets = listOf(0, 4, 7),
         weights = listOf(3.0f, 2.0f, 1.6f),
-        requiredOffsets = listOf(0),
+        requiredOffsets = listOf(0, 4),
         colorOffsets = emptyList(),
     ),
 )
@@ -351,8 +356,6 @@ fun analyzeMusicalKey(noteClasses: List<String>): KeyAnalysis {
             )
         }
         ?: scalarGuess
-    val chordGuesses = guess?.likelyChordGuesses(weightedCounts).orEmpty()
-    val useFlatNames = guess?.displayName.shouldUseFlatChordNames()
     val scalarConfidence = if (bestGuess != null && guess != null) {
         (guess.score / bestGuess.score.coerceAtLeast(0.01f)).coerceIn(0f, 1.5f)
     } else {
@@ -361,8 +364,8 @@ fun analyzeMusicalKey(noteClasses: List<String>): KeyAnalysis {
     return KeyAnalysis(
         recentNotes = noteClasses.takeLast(8),
         guessedKey = guess?.displayName?.withoutVisibleBluesLabel(),
-        likelyChords = chordGuesses.map { it.displayLabel(useFlatNames) },
-        chordTones = chordGuesses.firstOrNull()?.displayTones(useFlatNames).orEmpty(),
+        likelyChords = emptyList(),
+        chordTones = emptyList(),
         scalarConfidence = scalarConfidence,
         leadScaleKey = leadScaleGuess?.displayName?.withoutVisibleBluesLabel(),
     )
@@ -504,16 +507,35 @@ private fun ChordTemplate.scoreChord(
     chordRootIndex: Int,
     rootWeight: Float,
 ): ChordGuess? {
-    val presenceFloor = maxOf(0.8f, peak * 0.11f)
+    val presenceFloor = maxOf(0.65f, peak * 0.09f)
+    val colorPresenceFloor = maxOf(0.8f, peak * 0.12f)
     val requiredPresent = requiredOffsets.all { offset ->
         counts[(chordRootIndex + offset).floorMod(KeyNoteClasses.size)] >= presenceFloor
     }
     if (!requiredPresent) return null
 
     val colorPresent = colorOffsets.count { offset ->
-        counts[(chordRootIndex + offset).floorMod(KeyNoteClasses.size)] >= presenceFloor
+        counts[(chordRootIndex + offset).floorMod(KeyNoteClasses.size)] >= colorPresenceFloor
     }
     if (colorOffsets.isNotEmpty() && colorPresent == 0) return null
+
+    val majorThirdSignal = counts[(chordRootIndex + 4).floorMod(KeyNoteClasses.size)]
+    val minorThirdSignal = counts[(chordRootIndex + 3).floorMod(KeyNoteClasses.size)]
+    val naturalFifthSignal = counts[(chordRootIndex + 7).floorMod(KeyNoteClasses.size)]
+    val diminishedFifthSignal = counts[(chordRootIndex + 6).floorMod(KeyNoteClasses.size)]
+    val augmentedFifthSignal = counts[(chordRootIndex + 8).floorMod(KeyNoteClasses.size)]
+    val suspendedSignal = maxOf(
+        counts[(chordRootIndex + 2).floorMod(KeyNoteClasses.size)],
+        counts[(chordRootIndex + 5).floorMod(KeyNoteClasses.size)],
+    )
+
+    when {
+        suffix.isBlank() && majorThirdSignal < minorThirdSignal * 1.08f -> return null
+        suffix == "m" && minorThirdSignal < majorThirdSignal * 1.08f -> return null
+        suffix.contains("sus") && maxOf(majorThirdSignal, minorThirdSignal) >= suspendedSignal * 0.9f -> return null
+        suffix.startsWith("aug") && naturalFifthSignal >= augmentedFifthSignal * 0.72f -> return null
+        (suffix.startsWith("dim") || suffix == "m7b5") && naturalFifthSignal >= diminishedFifthSignal * 0.72f -> return null
+    }
 
     var score = 0f
     offsets.forEachIndexed { index, offset ->
@@ -525,10 +547,10 @@ private fun ChordTemplate.scoreChord(
         score *= 1.16f
     }
     if (suffix == "aug7" || suffix == "aug") {
-        score *= 1.08f
+        score *= 0.96f
     }
     if (suffix.contains('#') || suffix.contains('b') || suffix == "9" || suffix == "m9" || suffix.contains("sus")) {
-        score *= 1.12f
+        score *= if (suffix.contains("sus")) 0.96f else 1.04f
     }
 
     val tones = offsets.map { offset ->
@@ -630,9 +652,10 @@ private fun dominantBluesProgressionGuess(counts: FloatArray): BluesProgressionG
 
 private fun rootChordSignal(counts: FloatArray, rootIndex: Int): Float {
     val minorThirdIndex = (rootIndex + 3).floorMod(KeyNoteClasses.size)
+    val majorThirdIndex = (rootIndex + 4).floorMod(KeyNoteClasses.size)
     val fifthIndex = (rootIndex + 7).floorMod(KeyNoteClasses.size)
     return counts[rootIndex] * 3.2f +
-        counts[minorThirdIndex] * 2f +
+        maxOf(counts[minorThirdIndex], counts[majorThirdIndex]) * 2f +
         counts[fifthIndex] * 2f
 }
 

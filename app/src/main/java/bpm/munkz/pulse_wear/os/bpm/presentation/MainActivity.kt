@@ -768,7 +768,13 @@ fun BeatPulseScreen(
         }
     }
 
-    val activeAudioReaderMode = if (fftOverlayOpen) SpectrumReaderMode.Song else spectrumReaderMode
+    val activeAudioReaderMode = when {
+        tunerOverlayOpen -> SpectrumReaderMode.Instrument
+        keyOverlayOpen || fftOverlayOpen -> SpectrumReaderMode.Song
+        appFeatures.isTuneOnly && tunePageIndex == TUNE_TUNER_PAGE_INDEX -> SpectrumReaderMode.Instrument
+        appFeatures.isTuneOnly && tunePageIndex == TUNE_KEY_PAGE_INDEX -> SpectrumReaderMode.Song
+        else -> spectrumReaderMode
+    }
     val audioAnalysisState = rememberAudioAnalysisState(
         enabled = micPermissionGranted && (audioOverlayOpen || tuneAudioOpen) && !isPreview && !appFeatures.isFreeOnly,
         listenProfile = tunerListenProfile,

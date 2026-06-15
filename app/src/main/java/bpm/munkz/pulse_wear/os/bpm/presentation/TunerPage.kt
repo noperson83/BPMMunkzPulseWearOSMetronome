@@ -69,6 +69,11 @@ fun TunerPage(
     val guessedKey = audioAnalysisState.guessedKey
     val detectedBpm = audioAnalysisState.detectedTempoBpm
     val peakReading = audioAnalysisState.spectrum.peakSpectrumReading()
+    val displayFrequency = audioAnalysisState.frequencyHz
+        ?.takeIf { frequency -> frequency in selectedProfile.minHz..selectedProfile.maxHz }
+    val displayNoteReading = displayFrequency?.toNoteReading(a4ReferenceHz)
+    val displayNoteName = displayNoteReading?.first ?: "--"
+    val displayCents = displayNoteReading?.second ?: 0
     var keySaveRoot by rememberSaveable { mutableStateOf<String?>(null) }
 
     BoxWithConstraints(
@@ -177,7 +182,7 @@ fun TunerPage(
             )
 
             Text(
-                text = audioAnalysisState.noteName,
+                text = displayNoteName,
                 fontSize = noteFontSize,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -185,7 +190,7 @@ fun TunerPage(
             )
 
             Text(
-                text = audioAnalysisState.frequencyHz?.let { "${it.roundToInt()} Hz" } ?: "-- Hz",
+                text = displayFrequency?.let { "${it.roundToInt()} Hz" } ?: "-- Hz",
                 fontSize = frequencyFontSize,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
@@ -200,7 +205,7 @@ fun TunerPage(
             )
             Spacer(modifier = Modifier.height(if (watchSClass) 1.dp else 1.dp))
             TunerNeedle(
-                cents = audioAnalysisState.cents,
+                cents = displayCents,
                 modifier = Modifier
                     .width(if (watchSClass) 132.dp else 154.dp)
                     .height(if (watchSClass) 38.dp else 46.dp),
@@ -208,7 +213,7 @@ fun TunerPage(
             Spacer(modifier = Modifier.height(2.dp))
 
             Text(
-                text = "${audioAnalysisState.cents.coerceIn(-99, 99)} cents",
+                text = "${displayCents.coerceIn(-99, 99)} cents",
                 fontSize = centsFontSize,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
                 textAlign = TextAlign.Center,
@@ -273,7 +278,7 @@ fun TunerPage(
                 )
 
                 Text(
-                    text = guessedKey ?: "--",
+                    text = "--",
                     fontSize = keyGuessFontSize,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -289,14 +294,6 @@ fun TunerPage(
                 modifier = Modifier.align(Alignment.BottomStart),
                 mirrored = true,
                 onClick = { onSaveBpm(detectedBpm) },
-            )
-        }
-
-        if (showSaveActions && guessedKey != null) {
-            TunerBottomActionButton(
-                text = appText.saveKey,
-                modifier = Modifier.align(Alignment.BottomEnd),
-                onClick = { keySaveRoot = guessedKey.toMusicalKeyRoot() },
             )
         }
 

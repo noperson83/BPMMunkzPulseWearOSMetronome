@@ -58,10 +58,20 @@ fun FftLabPage(
         val graphHeight = if (watchSClass) 54.dp else 62.dp
         val range = selectedProfile.audioListenRangeFor(selectedReaderMode)
         val liveChord = audioAnalysisState.likelyChords.firstOrNull()
-        val progressionChords = audioAnalysisState.chordProgression.takeLast(8)
+        val progressionChords = audioAnalysisState.chordProgression.take(16)
         val meterText = audioAnalysisState.tempoMeterLabel.ifBlank { "${audioAnalysisState.tempoMeter}/4" }
         val musicalTempoText = audioAnalysisState.musicalTempoBpm?.toString() ?: "--"
         val feelText = audioAnalysisState.tempoFeelLabel.ifBlank { "Raw" }
+        val keyText = audioAnalysisState.guessedKey?.let { key ->
+            if (audioAnalysisState.keyConfidence > 0f) {
+                "$key ${(audioAnalysisState.keyConfidence * 100f).roundToInt()}%"
+            } else {
+                key
+            }
+        } ?: "--"
+        val phraseText = audioAnalysisState.phraseLengthBars?.let { bars ->
+            "${bars}b ${(audioAnalysisState.phraseConfidence * 100f).roundToInt()}%"
+        } ?: "Learn"
         val sensedA4Text = audioAnalysisState.sensedA4Hz?.let { sensedA4Hz ->
             val direction = when {
                 audioAnalysisState.sensedA4OffsetCents > 0 -> "+"
@@ -112,12 +122,23 @@ fun FftLabPage(
             if (!micPermissionGranted) {
                 MicPermissionButton(appText = appText, onClick = onRequestMicPermission)
             } else {
-                FftBarsGraph(
-                    spectrum = audioAnalysisState.spectrum,
+                Box(
                     modifier = Modifier
                         .fillMaxWidth(0.86f)
                         .height(graphHeight),
-                )
+                    contentAlignment = Alignment.Center,
+                ) {
+                    FftBarsGraph(
+                        spectrum = audioAnalysisState.spectrum,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    PhraseChordOverlay(
+                        chords = progressionChords.ifEmpty { listOfNotNull(liveChord) },
+                        keyName = audioAnalysisState.guessedKey,
+                        modifier = Modifier.fillMaxSize(),
+                        labelFont = labelFont,
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(3.dp))
@@ -163,10 +184,10 @@ fun FftLabPage(
                 )
                 FftReadoutChip(
                     label = "Key",
-                    value = audioAnalysisState.guessedKey ?: "--",
+                    value = keyText,
                     labelFont = labelFont,
                     valueFont = valueFont,
-                    selected = audioAnalysisState.guessedKey != null,
+                    selected = audioAnalysisState.keyConfidence >= 0.5f,
                 )
             }
 
@@ -178,6 +199,8 @@ fun FftLabPage(
                     append("  ")
                     if (progressionChords.isNotEmpty()) {
                         append("Prog ")
+                        append(phraseText)
+                        append(" ")
                         progressionChords.forEachIndexed { index, chord ->
                             if (index > 0) append(" ")
                             pushStyle(SpanStyle(color = chord.chordEmotionColor()))
@@ -192,11 +215,115 @@ fun FftLabPage(
                             pushStyle(SpanStyle(color = liveChord.chordEmotionColor()))
                             append(liveChord)
                             pop()
+                            if (audioAnalysisState.chordConfidence > 0f) {
+                                append(" ")
+                                append("${(audioAnalysisState.chordConfidence * 100f).roundToInt()}%")
+                            }
+                            audioAnalysisState.alternateChord?.let { alternate ->
+                                append(" / ")
+                                pushStyle(SpanStyle(color = alternate.chordEmotionColor().copy(alpha = 0.68f)))
+                                append(alternate)
+                                pop()
+                            }
                         }
                     }
                 },
                 fontSize = labelFont,
                 color = Color.White.copy(alpha = 0.74f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PhraseChordOverlay(
+    chords: List<String>,
+    keyName: String?,
+    modifier: Modifier = Modifier,
+    labelFont: TextUnit,
+) {
+    if (chords.isEmpty()) return
+
+    val displayedChords = chords.take(16)
+    val rowChunks = displayedChords.chunked(4)
+    val rows = rowChunks.size.coerceAtLeast(1)
+    val rowHeight = when {
+        rows >= 4 -> 13.dp
+        rows == 3 -> 16.dp
+        rows == 2 -> 20.dp
+        else -> 26.dp
+    }
+    Column(
+        modifier = modifier.padding(horizontal = 2.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.Bottom),
+    ) {
+        rowChunks.forEachIndexed { rowIndex, rowChords ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(rowHeight),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                rowChords.forEachIndexed { index, chord ->
+                    val isFirst = rowIndex == 0 && index == 0
+                    PhraseChordCell(
+                        chord = chord,
+                        keyName = keyName,
+                        isFirst = isFirst,
+                        labelFont = labelFont,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhraseChordCell(
+    chord: String,
+    keyName: String?,
+    isFirst: Boolean,
+    labelFont: TextUnit,
+    modifier: Modifier = Modifier,
+) {
+    val uncertain = chord.endsWith("?")
+    val color = if (uncertain) Color.White.copy(alpha = 0.54f) else chord.chordEmotionColor()
+    val shape = RoundedCornerShape(4.dp)
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .clip(shape)
+            .background(color.copy(alpha = if (uncertain) 0.12f else 0.22f), shape)
+            .border(
+                width = if (isFirst) 1.5.dp else 0.8.dp,
+                color = if (isFirst) MaterialTheme.colorScheme.primary.copy(alpha = 0.9f) else color.copy(alpha = 0.42f),
+                shape = shape,
+            )
+            .padding(horizontal = 2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = chord,
+            fontSize = labelFont,
+            lineHeight = labelFont,
+            fontWeight = if (isFirst) FontWeight.Black else FontWeight.Bold,
+            color = if (uncertain) Color.White.copy(alpha = 0.74f) else Color.White.copy(alpha = 0.92f),
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        val function = chord.harmonicFunctionIn(keyName)
+        if (function.isNotBlank() && !uncertain) {
+            Text(
+                text = function,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                fontSize = 5.sp,
+                lineHeight = 5.sp,
+                color = Color.White.copy(alpha = 0.48f),
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

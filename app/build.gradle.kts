@@ -95,5 +95,6 @@ dependencies {
     implementation(libs.wear.protolayout.material3)
     implementation(libs.wear.protolayout.expression)
     implementation(libs.wear.watchface.complications.data.source)
+    testImplementation("junit:junit:4.13.2")
     debugImplementation(libs.wear.tiles.renderer)
 }
