@@ -61,6 +61,7 @@ fun SpectrumAnalyzerPage(
     selectedTuningChoice: SpectrumTuningChoice?,
     micPermissionGranted: Boolean,
     showSaveToClock: Boolean = true,
+    showFftLabButton: Boolean = false,
     onSpectrumSettingsSaved: (SpectrumReaderMode, TunerListenProfile, SpectrumTuningChoice?) -> Unit,
     onSaveToClock: (Int, String) -> Unit,
     onOpenFft: () -> Unit,
@@ -136,6 +137,20 @@ fun SpectrumAnalyzerPage(
                 )
             }
 
+            if (audioAnalysisState.harmonySummary.isNotBlank()) {
+                Text(
+                    text = audioAnalysisState.harmonySummary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 1.dp),
+                    fontSize = if (watchSClass) 8.sp else 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                )
+            }
+
             if (!micPermissionGranted) {
                 MicPermissionButton(appText = appText, onClick = onRequestMicPermission)
             } else {
@@ -169,17 +184,19 @@ fun SpectrumAnalyzerPage(
             },
         )
 
-        TunerProfileButton(
-            text = "FFT",
-            selected = false,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 6.dp, bottom = 4.dp)
-                .width(editButtonWidth)
-                .height(editButtonHeight),
-            fontSize = editButtonFontSize,
-            onClick = onOpenFft,
-        )
+        if (showFftLabButton) {
+            TunerProfileButton(
+                text = "FFT",
+                selected = false,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 6.dp, bottom = 4.dp)
+                    .width(editButtonWidth)
+                    .height(editButtonHeight),
+                fontSize = editButtonFontSize,
+                onClick = onOpenFft,
+            )
+        }
 
         if (showSaveToClock && detectedBpm != null && guessedKey != null) {
             ArchedTopStartButton(

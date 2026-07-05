@@ -5,7 +5,6 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.SystemClock
-import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -20,6 +19,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.log2
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -27,8 +27,6 @@ import kotlin.math.sqrt
 
 private const val AUDIO_SAMPLE_RATE = 44_100
 private const val AUDIO_FRAME_SIZE = 2_048
-private const val AUDIO_TEMPO_LOG_TAG = "BPM_TEMPO"
-private const val AUDIO_SONG_LOG_TAG = "BPM_SONG"
 private const val SMALL_WATCH_MIN_BUFFER_SIZE = 2_000
 private const val SMALL_WATCH_PITCH_FRAME_STRIDE = 6
 private const val AUDIO_UI_UPDATE_INTERVAL_MS = 140L
@@ -47,9 +45,6 @@ private const val TEMPO_INTERVAL_WINDOW_COUNT = 11
 private const val TEMPO_CLUSTER_TOLERANCE_BPM = 4
 private const val TEMPO_CHANGE_CONFIRMATION_COUNT = 3
 private const val TEMPO_DETECTION_TIMEOUT_MS = 3_000L
-private const val TEMPO_DEBUG_LOG_INTERVAL_MS = 1_000L
-private const val TEMPO_PROCESSING_LOG_INTERVAL_MS = 2_000L
-private const val SONG_DEBUG_LOG_INTERVAL_MS = 900L
 private const val TUNER_KEY_SAMPLE_COUNT = 192
 private const val SONG_CONTEXT_CHORD_SAMPLE_COUNT = 360
 private const val SONG_CONTEXT_MIN_CHORD_SAMPLES = 10
@@ -64,10 +59,21 @@ private data class PitchAnalysisState(
     val likelyChords: List<String> = emptyList(),
     val chordConfidence: Float = 0f,
     val alternateChord: String? = null,
+    val chordCandidates: List<String> = emptyList(),
+    val keyCandidates: List<String> = emptyList(),
     val chordTones: List<String> = emptyList(),
     val chordProgression: List<String> = emptyList(),
     val phraseLengthBars: Int? = null,
     val phraseConfidence: Float = 0f,
+    val phraseBarIndex: Int = 0,
+    val phraseLocked: Boolean = false,
+    val phraseSource: String = "",
+    val downbeatGuess: Int = 0,
+    val downbeatConfidence: Float = 0f,
+    val downbeatRoot: String? = null,
+    val downbeatLandingStrength: Float = 0f,
+    val harmonySummary: String = "",
+    val songDebugLine: String = "",
     val sensedA4Hz: Float? = null,
     val sensedA4OffsetCents: Int = 0,
 )
@@ -104,8 +110,21 @@ private fun AudioAnalysisState.toPitchAnalysisState(): PitchAnalysisState {
         likelyChords = likelyChords,
         chordConfidence = chordConfidence,
         alternateChord = alternateChord,
+        chordCandidates = chordCandidates,
+        keyCandidates = keyCandidates,
         chordTones = chordTones,
         chordProgression = chordProgression,
+        phraseLengthBars = phraseLengthBars,
+        phraseConfidence = phraseConfidence,
+        phraseBarIndex = phraseBarIndex,
+        phraseLocked = phraseLocked,
+        phraseSource = phraseSource,
+        downbeatGuess = downbeatGuess,
+        downbeatConfidence = downbeatConfidence,
+        downbeatRoot = downbeatRoot,
+        downbeatLandingStrength = downbeatLandingStrength,
+        harmonySummary = harmonySummary,
+        songDebugLine = songDebugLine,
         sensedA4Hz = sensedA4Hz,
         sensedA4OffsetCents = sensedA4OffsetCents,
     )
@@ -158,7 +177,6 @@ private suspend fun runAudioAnalyzer(
         AudioFormat.ENCODING_PCM_16BIT,
     )
     if (minBufferSize <= 0) {
-        Log.w(AUDIO_TEMPO_LOG_TAG, "audio init failed minBuffer=$minBufferSize requestedRate=$AUDIO_SAMPLE_RATE")
         return
     }
 
@@ -181,14 +199,6 @@ private suspend fun runAudioAnalyzer(
     } else {
         1
     }
-    Log.i(
-        AUDIO_TEMPO_LOG_TAG,
-        "audio init requestedRate=$AUDIO_SAMPLE_RATE actualRate=${recorder.sampleRate} " +
-            "state=${recorder.state} minBuffer=$minBufferSize bufferSize=$bufferSize " +
-            "frameSize=$AUDIO_FRAME_SIZE pitchStride=$pitchFrameStride listen=${listenRange.label} " +
-            "range=${listenRange.minHz.roundToInt()}-${listenRange.maxHz.roundToInt()}Hz " +
-            "spectrum=$includeSpectrum",
-    )
     val buffer = ShortArray(AUDIO_FRAME_SIZE)
     val pitchAverager = TunerPitchAverager(listenRange)
     val tempoEstimator = MicTempoEstimator()
@@ -204,9 +214,6 @@ private suspend fun runAudioAnalyzer(
         withContext(Dispatchers.IO) {
             recorder.startRecording()
         }
-        val analyzerStartElapsedMs = SystemClock.elapsedRealtime()
-        var lastProcessingLogElapsedMs = analyzerStartElapsedMs
-
         while (true) {
             val read = withContext(Dispatchers.IO) {
                 recorder.read(buffer, 0, buffer.size)
@@ -231,15 +238,6 @@ private suspend fun runAudioAnalyzer(
                 )
                 lastPitchAnalysis = analysis.toPitchAnalysisState()
                 val nowElapsedMs = SystemClock.elapsedRealtime()
-                if (nowElapsedMs - lastProcessingLogElapsedMs >= TEMPO_PROCESSING_LOG_INTERVAL_MS) {
-                    val wallAudioMs = nowElapsedMs - analyzerStartElapsedMs
-                    Log.i(
-                        AUDIO_TEMPO_LOG_TAG,
-                        "processing read=$read audio=${frameStartAudioMs}ms wall=${wallAudioMs}ms " +
-                            "drift=${wallAudioMs - frameStartAudioMs}ms",
-                    )
-                    lastProcessingLogElapsedMs = nowElapsedMs
-                }
                 val tempoChanged = analysis.detectedTempoBpm != lastPublishedTempoBpm ||
                     analysis.tempoActiveBeatIndex != lastPublishedTempoBeatIndex ||
                     analysis.tempoLearningBeats != lastPublishedTempoLearningBeats
@@ -339,12 +337,42 @@ private fun analyzeAudioFrame(
         } else {
             FloatArray(TunerAnalyzerNoteClasses.size)
         }
-        val bassPitchClassLevels = if (level >= TUNER_MIN_KEY_LEVEL && readerMode == SpectrumReaderMode.Song) {
+        val subBassPitchClassLevels = if (level >= TUNER_MIN_KEY_LEVEL && readerMode == SpectrumReaderMode.Song) {
             spectrumPitchClassLevels(
                 fftFrame = fftFrame,
                 a4ReferenceHz = a4ReferenceHz,
                 minHz = 45f,
-                maxHz = 360f,
+                maxHz = 120f,
+            )
+        } else {
+            FloatArray(TunerAnalyzerNoteClasses.size)
+        }
+        val bassPitchClassLevels = if (level >= TUNER_MIN_KEY_LEVEL && readerMode == SpectrumReaderMode.Song) {
+            spectrumPitchClassLevels(
+                fftFrame = fftFrame,
+                a4ReferenceHz = a4ReferenceHz,
+                minHz = 55f,
+                maxHz = 240f,
+            )
+        } else {
+            FloatArray(TunerAnalyzerNoteClasses.size)
+        }
+        val bassPitchClassOctaves = if (level >= TUNER_MIN_KEY_LEVEL && readerMode == SpectrumReaderMode.Song) {
+            spectrumPitchClassOctaveCounts(
+                fftFrame = fftFrame,
+                a4ReferenceHz = a4ReferenceHz,
+                minHz = 55f,
+                maxHz = 240f,
+            )
+        } else {
+            IntArray(TunerAnalyzerNoteClasses.size)
+        }
+        val lowMidPitchClassLevels = if (level >= TUNER_MIN_KEY_LEVEL && readerMode == SpectrumReaderMode.Song) {
+            spectrumPitchClassLevels(
+                fftFrame = fftFrame,
+                a4ReferenceHz = a4ReferenceHz,
+                minHz = 120f,
+                maxHz = 520f,
             )
         } else {
             FloatArray(TunerAnalyzerNoteClasses.size)
@@ -353,16 +381,29 @@ private fun analyzeAudioFrame(
             spectrumPitchClassLevels(
                 fftFrame = fftFrame,
                 a4ReferenceHz = a4ReferenceHz,
-                minHz = 120f,
-                maxHz = 1_200f,
+                minHz = 350f,
+                maxHz = 1_500f,
+            )
+        } else {
+            FloatArray(TunerAnalyzerNoteClasses.size)
+        }
+        val highPitchClassLevels = if (level >= TUNER_MIN_KEY_LEVEL && readerMode == SpectrumReaderMode.Song) {
+            spectrumPitchClassLevels(
+                fftFrame = fftFrame,
+                a4ReferenceHz = a4ReferenceHz,
+                minHz = 1_200f,
+                maxHz = listenRange.maxHz.coerceAtMost(3_500f),
             )
         } else {
             FloatArray(TunerAnalyzerNoteClasses.size)
         }
         val songPitchClassLevels = if (readerMode == SpectrumReaderMode.Song) {
             cleanedSongChroma(
+                subBassLevels = subBassPitchClassLevels,
                 bassLevels = bassPitchClassLevels,
+                lowMidLevels = lowMidPitchClassLevels,
                 midLevels = midPitchClassLevels,
+                highLevels = highPitchClassLevels,
                 fullLevels = rawSongPitchClassLevels,
             )
         } else {
@@ -372,17 +413,37 @@ private fun analyzeAudioFrame(
             if (readerMode == SpectrumReaderMode.Instrument && note != null) {
                 pitchAverager.tunerNoteSummary(note.first)
             } else if (readerMode == SpectrumReaderMode.Song) {
-                val rootEvidence = dominantChromaRootEvidence(
+                val subBassRootEvidence = dominantChromaRootEvidence(
+                    classLevels = subBassPitchClassLevels,
+                    minPeak = 0.00032f,
+                    dominanceRatio = 1.08f,
+                )
+                val bandBassRootEvidence = dominantChromaRootEvidence(
                     classLevels = bassPitchClassLevels,
+                    octaveCounts = bassPitchClassOctaves,
                     minPeak = 0.00045f,
-                    dominanceRatio = 1.06f,
+                    dominanceRatio = 1.12f,
+                )
+                val pitchRootEvidence = note
+                    ?.first
+                    ?.toNoteClass()
+                    ?.let { noteClass -> ChordRootEvidence(noteClass, 0.74f) }
+                val rootEvidence = selectSongRootEvidence(
+                    subBass = subBassRootEvidence,
+                    bass = bandBassRootEvidence,
+                    pitch = pitchRootEvidence,
                 )
                 pitchAverager.rootThirdSongSummary(
                     rootNoteClass = rootEvidence?.label,
                     rootConfidence = rootEvidence?.confidence ?: 0f,
+                    subBassRootClass = subBassRootEvidence?.label,
+                    subBassRootConfidence = subBassRootEvidence?.confidence ?: 0f,
+                    bandBassRootClass = bandBassRootEvidence?.label,
+                    bandBassRootConfidence = bandBassRootEvidence?.confidence ?: 0f,
                     classLevels = songPitchClassLevels,
                     audioTimeMs = frameStartAudioMs,
                     tempoBpm = tempoAnalysis.detectedBpm,
+                    activeBeatIndex = tempoAnalysis.activeBeatIndex,
                     meter = 4,
                     tempoConfident = tempoAnalysis.confident,
                 )
@@ -402,10 +463,21 @@ private fun analyzeAudioFrame(
             likelyChords = keyAnalysis.likelyChords,
             chordConfidence = keyAnalysis.chordConfidence,
             alternateChord = keyAnalysis.alternateChord,
+            chordCandidates = keyAnalysis.chordCandidates,
+            keyCandidates = keyAnalysis.keyCandidates,
             chordTones = keyAnalysis.chordTones,
             chordProgression = keyAnalysis.chordProgression,
             phraseLengthBars = keyAnalysis.phraseLengthBars,
             phraseConfidence = keyAnalysis.phraseConfidence,
+            phraseBarIndex = keyAnalysis.phraseBarIndex,
+            phraseLocked = keyAnalysis.phraseLocked,
+            phraseSource = keyAnalysis.phraseSource,
+            downbeatGuess = keyAnalysis.downbeatGuess,
+            downbeatConfidence = keyAnalysis.downbeatConfidence,
+            downbeatRoot = keyAnalysis.downbeatRoot,
+            downbeatLandingStrength = keyAnalysis.downbeatLandingStrength,
+            harmonySummary = keyAnalysis.harmonySummary,
+            songDebugLine = keyAnalysis.songDebugLine,
             sensedA4Hz = sensedA4Hz,
             sensedA4OffsetCents = sensedA4Hz?.let { sensed ->
                 centsBetween(sensed, a4ReferenceHz.toFloat()).roundToInt()
@@ -442,10 +514,21 @@ private fun analyzeAudioFrame(
         likelyChords = pitchAnalysis.likelyChords,
         chordConfidence = pitchAnalysis.chordConfidence,
         alternateChord = pitchAnalysis.alternateChord,
+        chordCandidates = pitchAnalysis.chordCandidates,
+        keyCandidates = pitchAnalysis.keyCandidates,
         chordTones = pitchAnalysis.chordTones,
         chordProgression = pitchAnalysis.chordProgression,
         phraseLengthBars = pitchAnalysis.phraseLengthBars,
         phraseConfidence = pitchAnalysis.phraseConfidence,
+        phraseBarIndex = pitchAnalysis.phraseBarIndex,
+        phraseLocked = pitchAnalysis.phraseLocked,
+        phraseSource = pitchAnalysis.phraseSource,
+        downbeatGuess = pitchAnalysis.downbeatGuess,
+        downbeatConfidence = pitchAnalysis.downbeatConfidence,
+        downbeatRoot = pitchAnalysis.downbeatRoot,
+        downbeatLandingStrength = pitchAnalysis.downbeatLandingStrength,
+        harmonySummary = pitchAnalysis.harmonySummary,
+        songDebugLine = pitchAnalysis.songDebugLine,
         sensedA4Hz = pitchAnalysis.sensedA4Hz,
         sensedA4OffsetCents = pitchAnalysis.sensedA4OffsetCents,
         spectrum = if (includeSpectrum) buildSpectrum(fftFrame) else emptyList(),
@@ -599,9 +682,14 @@ private class TunerPitchAverager(
     fun rootThirdSongSummary(
         rootNoteClass: String?,
         rootConfidence: Float = 0f,
+        subBassRootClass: String? = null,
+        subBassRootConfidence: Float = 0f,
+        bandBassRootClass: String? = null,
+        bandBassRootConfidence: Float = 0f,
         classLevels: FloatArray,
         audioTimeMs: Long,
         tempoBpm: Int?,
+        activeBeatIndex: Int,
         meter: Int,
         tempoConfident: Boolean,
     ): KeyAnalysis {
@@ -619,9 +707,14 @@ private class TunerPitchAverager(
         val songContext = rootThirdSongTracker.update(
             preferredRootIndex = rootIndex,
             preferredRootConfidence = rootConfidence,
+            subBassRootClass = subBassRootClass,
+            subBassRootConfidence = subBassRootConfidence,
+            bandBassRootClass = bandBassRootClass,
+            bandBassRootConfidence = bandBassRootConfidence,
             classLevels = classLevels,
             audioTimeMs = audioTimeMs,
             tempoBpm = tempoBpm,
+            activeBeatIndex = activeBeatIndex,
             meter = meter,
             tempoConfident = tempoConfident,
         )
@@ -632,10 +725,21 @@ private class TunerPitchAverager(
             likelyChords = listOfNotNull(songContext.liveChord),
             chordConfidence = songContext.chordConfidence,
             alternateChord = songContext.alternateChord,
+            chordCandidates = songContext.chordCandidates,
+            keyCandidates = songContext.keyCandidates,
             chordTones = songContext.chordTones,
             chordProgression = songContext.progression,
             phraseLengthBars = songContext.phraseLengthBars,
             phraseConfidence = songContext.phraseConfidence,
+            phraseBarIndex = songContext.phraseBarIndex,
+            phraseLocked = songContext.phraseLocked,
+            phraseSource = songContext.phraseSource,
+            downbeatGuess = songContext.downbeatGuess,
+            downbeatConfidence = songContext.downbeatConfidence,
+            downbeatRoot = songContext.downbeatRoot,
+            downbeatLandingStrength = songContext.downbeatLandingStrength,
+            harmonySummary = songContext.harmonySummary,
+            songDebugLine = songContext.debugLine,
         )
     }
 
@@ -721,8 +825,6 @@ private class MicTempoEstimator {
     private var stableTempoBpm: Int? = null
     private var pendingTempoBpm: Int? = null
     private var pendingTempoCount = 0
-    private var lastDebugLogMs = 0L
-    private var lastLoggedStableTempoBpm: Int? = null
     private var stableMeter = 4
     private var previousFluxMagnitudes: FloatArray? = null
 
@@ -765,14 +867,6 @@ private class MicTempoEstimator {
 
         previousLevel = safeLevel
         if (!isOnset) {
-            logTempoDebug(
-                audioTimeMs = audioTimeMs,
-                safeLevel = safeLevel,
-                levelJump = levelJump,
-                isOnset = false,
-                intervalSinceLastOnsetMs = intervalSinceLastOnsetMs,
-                candidateBpm = null,
-            )
             return tempoState(
                 activeBeatIndex = -1,
                 bassBpm = bassBpm,
@@ -795,14 +889,6 @@ private class MicTempoEstimator {
             updateStableTempo(candidate)
         }
         stableMeter = estimateMeterFromAccents()
-        logTempoDebug(
-            audioTimeMs = audioTimeMs,
-            safeLevel = safeLevel,
-            levelJump = levelJump,
-            isOnset = true,
-            intervalSinceLastOnsetMs = intervalSinceLastOnsetMs,
-            candidateBpm = candidateBpm,
-        )
         return tempoState(
             activeBeatIndex = (onsetTimesMs.size - 1).floorMod(stableMeter),
             bassBpm = bassBpm,
@@ -889,56 +975,6 @@ private class MicTempoEstimator {
         }
         if (count == 0) return 0f
         return (flux / count * gain).coerceIn(0f, 1f)
-    }
-
-    private fun logTempoDebug(
-        audioTimeMs: Long,
-        safeLevel: Float,
-        levelJump: Float,
-        isOnset: Boolean,
-        intervalSinceLastOnsetMs: Long?,
-        candidateBpm: Int?,
-    ) {
-        val stableChanged = stableTempoBpm != lastLoggedStableTempoBpm
-        val shouldLog = isOnset ||
-            candidateBpm != null ||
-            stableChanged ||
-            audioTimeMs - lastDebugLogMs >= TEMPO_DEBUG_LOG_INTERVAL_MS
-        if (!shouldLog) return
-
-        lastDebugLogMs = audioTimeMs
-        lastLoggedStableTempoBpm = stableTempoBpm
-        Log.i(
-            AUDIO_TEMPO_LOG_TAG,
-            "tempo t=${audioTimeMs}ms level=${safeLevel.debugLevel()} " +
-                "smooth=${smoothedLevel.debugLevel()} jump=${levelJump.debugLevel()} " +
-                "onset=$isOnset interval=${intervalSinceLastOnsetMs ?: "--"}ms " +
-                "onsets=${onsetTimesMs.size} candidate=${candidateBpm ?: "--"} " +
-                "pending=${pendingTempoBpm ?: "--"}/$pendingTempoCount " +
-                "stable=${stableTempoBpm ?: "--"} " +
-                "window=${tempoDebugWindow()}",
-        )
-    }
-
-    private fun tempoDebugWindow(): String {
-        val intervals = onsetTimesMs
-            .zipWithNext { previous, current -> current - previous }
-            .filter { it in MIN_TEMPO_ONSET_INTERVAL_MS..MAX_TEMPO_ONSET_INTERVAL_MS }
-            .takeLast(TEMPO_INTERVAL_WINDOW_COUNT)
-        if (intervals.isEmpty()) return "[]"
-
-        val bpmCandidates = intervals.map { intervalMs ->
-            (60_000f / intervalMs).roundToInt()
-                .normalizedDetectedTempo()
-                .coerceIn(MIN_BPM, MAX_BPM)
-        }
-        return intervals.zip(bpmCandidates).joinToString(
-            separator = ",",
-            prefix = "[",
-            postfix = "]",
-        ) { (intervalMs, bpm) ->
-            "${intervalMs}ms:${bpm}bpm"
-        }
     }
 
     private fun estimateTempoFromOnsets(hasStableTempo: Boolean): Int? {
@@ -1093,16 +1129,45 @@ private data class SongKeyEstimate(
     val confidence: Float,
 )
 
+internal data class FunctionalHarmonyInfo(
+    val roman: String,
+    val function: String,
+    val tags: List<String>,
+)
+
 private data class RootThirdSongContext(
     val liveChord: String?,
     val chordConfidence: Float,
     val alternateChord: String?,
+    val chordCandidates: List<String>,
     val keySuggestion: String?,
     val keyConfidence: Float,
+    val keyCandidates: List<String>,
     val chordTones: List<String>,
     val progression: List<String>,
     val phraseLengthBars: Int?,
     val phraseConfidence: Float,
+    val phraseBarIndex: Int,
+    val phraseLocked: Boolean,
+    val phraseSource: String,
+    val downbeatGuess: Int,
+    val downbeatConfidence: Float,
+    val downbeatRoot: String?,
+    val downbeatLandingStrength: Float,
+    val harmonySummary: String,
+    val debugLine: String,
+)
+
+private data class ChordRootHint(
+    val rootIndex: Int,
+    val confidence: Float,
+)
+
+private data class DownbeatLandingState(
+    val beatNumber: Int = 0,
+    val confidence: Float = 0f,
+    val root: String? = null,
+    val landingStrength: Float = 0f,
 )
 
 private data class BeatChromaSnapshot(
@@ -1110,32 +1175,139 @@ private data class BeatChromaSnapshot(
     val committedChroma: FloatArray?,
 )
 
+private class DownbeatLandingTracker {
+    private val beatScores = FloatArray(8)
+    private val beatRoots = Array(8) { FloatArray(TunerAnalyzerNoteClasses.size) }
+    private var observationCount = 0
+
+    fun update(
+        activeBeatIndex: Int,
+        meter: Int,
+        tempoConfident: Boolean,
+        rootHint: ChordRootHint?,
+        classLevels: FloatArray,
+    ): DownbeatLandingState {
+        val safeMeter = meter.coerceIn(2, 8)
+        if (!tempoConfident || activeBeatIndex !in 0 until safeMeter) {
+            return currentState(safeMeter)
+        }
+
+        val peak = classLevels.maxOrNull()?.coerceAtLeast(0.0001f) ?: 0.0001f
+        val rootIndex = rootHint?.rootIndex
+        val rootStrength = rootIndex
+            ?.let { index -> (classLevels.getOrNull(index) ?: 0f) / peak }
+            ?: 0f
+        val rootConfidence = rootHint?.confidence ?: 0f
+        val energyStrength = (peak / 3.0f).coerceIn(0f, 1f)
+        val landingStrength = (
+            rootConfidence * 0.4f +
+                rootStrength.coerceIn(0f, 1f) * 0.2f +
+                energyStrength * 0.4f
+            )
+            .coerceIn(0f, 1f)
+        if (landingStrength <= 0.08f) return currentState(safeMeter)
+
+        decay()
+        beatScores[activeBeatIndex] += landingStrength
+        if (rootIndex != null) {
+            beatRoots[activeBeatIndex][rootIndex] += landingStrength
+        }
+        observationCount = (observationCount + 1).coerceAtMost(128)
+        return currentState(safeMeter)
+    }
+
+    fun clear() {
+        beatScores.fill(0f)
+        beatRoots.forEach { roots -> roots.fill(0f) }
+        observationCount = 0
+    }
+
+    private fun currentState(meter: Int): DownbeatLandingState {
+        if (observationCount < 3) return DownbeatLandingState()
+        val bestIndex = (0 until meter).maxByOrNull { index -> beatScores[index] } ?: return DownbeatLandingState()
+        val best = beatScores[bestIndex]
+        if (best <= 0.01f) return DownbeatLandingState()
+        val runnerUp = (0 until meter)
+            .filter { index -> index != bestIndex }
+            .maxOfOrNull { index -> beatScores[index] }
+            ?: 0f
+        val total = (0 until meter).sumOf { index -> beatScores[index].toDouble() }.toFloat().coerceAtLeast(0.01f)
+        val share = best / total
+        val separation = if (runnerUp <= 0f) 1f else ((best / runnerUp) - 1f) / 1.4f
+        val confidence = (share * 0.62f + separation.coerceIn(0f, 1f) * 0.38f)
+            .coerceIn(0f, 1f)
+        val rootIndex = beatRoots[bestIndex].indices.maxByOrNull { index -> beatRoots[bestIndex][index] }
+        val root = rootIndex
+            ?.takeIf { index -> beatRoots[bestIndex][index] > 0.01f }
+            ?.let { index -> TunerAnalyzerNoteClasses[index] }
+        return DownbeatLandingState(
+            beatNumber = bestIndex + 1,
+            confidence = confidence,
+            root = root,
+            landingStrength = best,
+        )
+    }
+
+    private fun decay() {
+        for (index in beatScores.indices) {
+            beatScores[index] *= 0.985f
+            for (rootIndex in beatRoots[index].indices) {
+                beatRoots[index][rootIndex] *= 0.985f
+            }
+        }
+    }
+}
+
 private class RootThirdSongTracker {
     private val chordVotes = mutableListOf<RootThirdChord>()
+    private val bassRootBarTracker = BassRootBarTracker()
     private val beatChromaTracker = BeatChromaTracker()
+    private val downbeatLandingTracker = DownbeatLandingTracker()
     private val chordSmoother = ChordSequenceSmoother()
     private val barTracker = BarChordTracker()
     private val structureDetector = StructurePhraseDetector()
     private val progression = mutableListOf<String>()
+    private val learningProgression = mutableListOf<String>()
     private val keyChromaSum = FloatArray(TunerAnalyzerNoteClasses.size)
     private var structureState = StructurePhraseState()
     private var stableChord: RootThirdChord? = null
     private var pendingChord: RootThirdChord? = null
     private var pendingChordCount = 0
+    private var pendingProgressionChord: String? = null
+    private var pendingProgressionCount = 0
+    private var learningLoopLength: Int? = null
+    private var learningLoopNextIndex = 0
     private var stableKey: String? = null
     private var keyFrameCount = 0
     private var lastKeyChromaAudioMs = 0L
-    private var lastDebugLogAudioMs = 0L
 
     fun update(
         preferredRootIndex: Int?,
         preferredRootConfidence: Float,
+        subBassRootClass: String?,
+        subBassRootConfidence: Float,
+        bandBassRootClass: String?,
+        bandBassRootConfidence: Float,
         classLevels: FloatArray,
         audioTimeMs: Long,
         tempoBpm: Int?,
+        activeBeatIndex: Int,
         meter: Int,
         tempoConfident: Boolean,
     ): RootThirdSongContext {
+        val instantRootHint = preferredRootIndex?.let { rootIndex ->
+            ChordRootHint(
+                rootIndex = rootIndex,
+                confidence = preferredRootConfidence.coerceIn(0f, 1f),
+            )
+        }
+        val barRootHint = bassRootBarTracker.update(
+            instantRootHint = instantRootHint,
+            audioTimeMs = audioTimeMs,
+            tempoBpm = tempoBpm,
+            meter = meter,
+            tempoConfident = tempoConfident,
+        )
         val beatChroma = beatChromaTracker.update(
             classLevels = classLevels,
             audioTimeMs = audioTimeMs,
@@ -1153,16 +1325,44 @@ private class RootThirdSongTracker {
         }
         val chordCandidates = matchChromaChordCandidates(
             classLevels = beatChroma.currentChroma,
-            preferredRootIndex = preferredRootIndex,
-            preferredRootConfidence = preferredRootConfidence,
+            preferredRootIndex = barRootHint?.rootIndex,
+            preferredRootConfidence = barRootHint?.confidence ?: 0f,
         )
-        val chord = chordSmoother.update(chordCandidates)
+        val rootGroundedCandidates = chordCandidates.groundedByRootEvidence(barRootHint?.confidence ?: 0f)
+        val songCoreCandidates = rootGroundedCandidates.preferMajorMinorCoreHarmony(beatChroma.currentChroma)
+        val smoothedChord = chordSmoother.update(songCoreCandidates)
+        val displayRootHint = barRootHint
+            ?: instantRootHint?.takeIf { hint -> hint.confidence >= 0.62f }
+        val chord = rootAnchoredDisplayChord(
+            rootHint = displayRootHint,
+            classLevels = beatChroma.currentChroma,
+            candidate = smoothedChord,
+        )
+        val downbeatState = downbeatLandingTracker.update(
+            activeBeatIndex = activeBeatIndex,
+            meter = meter,
+            tempoConfident = tempoConfident,
+            rootHint = instantRootHint,
+            classLevels = classLevels,
+        )
+        val displayedChordCandidates = (
+            listOfNotNull(chord?.label, smoothedChord?.label) +
+                songCoreCandidates.map { it.chord.label } +
+                chordCandidates.map { it.chord.label }
+            )
+            .distinct()
+            .take(8)
         val alternateChord = chordCandidates
             .map { it.chord }
             .firstOrNull { candidate -> candidate.label != chord?.label }
         val observedChord = chord?.let { nextChord ->
             val stable = stableChord
-            if (stable != null && stable.rootIndex == nextChord.rootIndex && stable.label != nextChord.label) {
+            if (
+                stable != null &&
+                stable.rootIndex == nextChord.rootIndex &&
+                stable.label != nextChord.label &&
+                stable.toMajorMinorCoreChord().label == nextChord.toMajorMinorCoreChord().label
+            ) {
                 nextChord.asUncertainRoot()
             } else {
                 nextChord
@@ -1180,6 +1380,7 @@ private class RootThirdSongTracker {
             if (pendingChordCount >= 2) {
                 stableChord = observedChord
                 if (observedChord.confident) {
+                    observeLearningProgression(observedChord)
                     chordVotes += observedChord
                     while (chordVotes.size > 96) {
                         chordVotes.removeAt(0)
@@ -1187,6 +1388,7 @@ private class RootThirdSongTracker {
                     committedBarObservation = barTracker.update(
                         chord = observedChord,
                         classLevels = beatChroma.currentChroma,
+                        instantRootHint = instantRootHint,
                         audioTimeMs = audioTimeMs,
                         tempoBpm = tempoBpm,
                         meter = meter,
@@ -1203,59 +1405,96 @@ private class RootThirdSongTracker {
             }
         }
 
-        val keyEstimate = estimateSongKey(
+        val displayProgression = when {
+            structureState.phraseLengthBars != null -> progression
+            learningProgression.isNotEmpty() -> learningProgression
+            else -> progression
+        }
+        val phraseSource = when {
+            structureState.phraseLengthBars != null -> "Lock"
+            learningProgression.isNotEmpty() -> "Learn"
+            progression.isNotEmpty() -> "Bars"
+            else -> ""
+        }
+        val phraseBarIndex = when {
+            structureState.phraseLengthBars != null -> structureState.currentBarIndex
+            displayProgression.isNotEmpty() -> displayProgression.size
+            else -> 0
+        }
+        val keyCandidates = estimateSongKeyCandidates(
             chroma = keyChromaSum,
             chordHistory = chordVotes,
-            progression = progression,
+            progression = displayProgression,
         )
+        val keyEstimate = selectStableSongKey(keyCandidates)
         stableKey = keyEstimate?.label ?: dominantKeySuggestion() ?: stableKey
         val liveChord = stableChord
-        logSongDebug(
-            audioTimeMs = audioTimeMs,
-            rootClass = chord?.rootIndex?.let { TunerAnalyzerNoteClasses[it] },
-            rootConfidence = preferredRootConfidence,
-            rawChord = chord?.label,
+        val harmonyInfo = functionalHarmonyInfo(stableKey, liveChord?.label)
+        val harmonySummary = harmonyInfo?.compactHarmonySummary().orEmpty()
+        val debugLine = songPipelineDebugLine(
+            bassRootClass = instantRootHint?.rootIndex?.let { TunerAnalyzerNoteClasses[it] },
+            rootConfidence = instantRootHint?.confidence ?: 0f,
+            barRootClass = barRootHint?.rootIndex?.let { TunerAnalyzerNoteClasses[it] },
+            chord = chord?.label,
             observedChord = observedChord?.label,
             stableChord = liveChord?.label,
             committedBarChord = committedBarObservation?.chord?.label,
-            progression = progression,
             phraseLengthBars = structureState.phraseLengthBars,
             phraseConfidence = structureState.phraseConfidence,
-            key = stableKey,
-            tempoBpm = tempoBpm,
-            meter = meter,
-            tempoConfident = tempoConfident,
-            chroma = beatChroma.currentChroma,
+            phraseBarIndex = phraseBarIndex,
+            phraseSource = phraseSource,
+            downbeatState = downbeatState,
+            progressionSize = displayProgression.size,
+            candidates = displayedChordCandidates,
+            keyCandidates = keyCandidates,
+            harmonySummary = harmonySummary,
         )
         return RootThirdSongContext(
             liveChord = liveChord?.label,
             chordConfidence = liveChord?.displayConfidence() ?: 0f,
             alternateChord = alternateChord?.label,
+            chordCandidates = displayedChordCandidates,
             keySuggestion = stableKey,
             keyConfidence = keyEstimate?.confidence ?: if (stableKey != null) 0.34f else 0f,
+            keyCandidates = keyCandidates.take(4).map { estimate -> "${estimate.label} ${twoDecimals(estimate.confidence)}" },
             chordTones = liveChord?.tones.orEmpty(),
-            progression = progression.toList(),
+            progression = displayProgression.toList(),
             phraseLengthBars = structureState.phraseLengthBars,
             phraseConfidence = structureState.phraseConfidence,
+            phraseBarIndex = phraseBarIndex,
+            phraseLocked = structureState.phraseLengthBars != null,
+            phraseSource = phraseSource,
+            downbeatGuess = downbeatState.beatNumber,
+            downbeatConfidence = downbeatState.confidence,
+            downbeatRoot = downbeatState.root,
+            downbeatLandingStrength = downbeatState.landingStrength,
+            harmonySummary = harmonySummary,
+            debugLine = debugLine,
         )
     }
 
     fun clear() {
         chordVotes.clear()
+        bassRootBarTracker.clear()
         beatChromaTracker.clear()
+        downbeatLandingTracker.clear()
         chordSmoother.clear()
         barTracker.clear()
         structureDetector.clear()
         progression.clear()
+        learningProgression.clear()
         keyChromaSum.fill(0f)
         structureState = StructurePhraseState()
         stableChord = null
         pendingChord = null
         pendingChordCount = 0
+        pendingProgressionChord = null
+        pendingProgressionCount = 0
+        learningLoopLength = null
+        learningLoopNextIndex = 0
         stableKey = null
         keyFrameCount = 0
         lastKeyChromaAudioMs = 0L
-        lastDebugLogAudioMs = 0L
     }
 
     private fun observeKeyChroma(classLevels: FloatArray) {
@@ -1273,45 +1512,77 @@ private class RootThirdSongTracker {
         keyFrameCount += 1
     }
 
-    private fun logSongDebug(
-        audioTimeMs: Long,
-        rootClass: String?,
-        rootConfidence: Float,
-        rawChord: String?,
-        observedChord: String?,
-        stableChord: String?,
-        committedBarChord: String?,
-        progression: List<String>,
-        phraseLengthBars: Int?,
-        phraseConfidence: Float,
-        key: String?,
-        tempoBpm: Int?,
-        meter: Int,
-        tempoConfident: Boolean,
-        chroma: FloatArray,
-    ) {
-        if (audioTimeMs - lastDebugLogAudioMs < SONG_DEBUG_LOG_INTERVAL_MS && committedBarChord == null) return
-        lastDebugLogAudioMs = audioTimeMs
-        val topChroma = chroma
-            .mapIndexed { index, level -> TunerAnalyzerNoteClasses[index] to level }
-            .sortedByDescending { it.second }
-            .take(4)
-            .joinToString(" ") { (note, level) -> "$note:${threeDecimals(level)}" }
-        Log.i(
-            AUDIO_SONG_LOG_TAG,
-            "t=${audioTimeMs}ms tempo=${tempoBpm ?: "--"}/$meter conf=$tempoConfident root=${rootClass ?: "--"} " +
-                "rootConf=${twoDecimals(rootConfidence)} " +
-                "raw=${rawChord ?: "--"} observed=${observedChord ?: "--"} stable=${stableChord ?: "--"} " +
-                "bar=${committedBarChord ?: "--"} key=${key ?: "--"} phrase=${phraseLengthBars ?: "--"}:${twoDecimals(phraseConfidence)} " +
-                "prog=${progression.joinToString(" ").ifBlank { "--" }} " +
-                "chroma=[$topChroma]",
-        )
-    }
-
     private fun removeProgressionRoot(rootIndex: Int) {
         structureState = structureDetector.removeRoot(rootIndex)
         progression.clear()
         progression += structureState.displayChords
+    }
+
+    private fun songPipelineDebugLine(
+        bassRootClass: String?,
+        rootConfidence: Float,
+        barRootClass: String?,
+        chord: String?,
+        observedChord: String?,
+        stableChord: String?,
+        committedBarChord: String?,
+        phraseLengthBars: Int?,
+        phraseConfidence: Float,
+        phraseBarIndex: Int,
+        phraseSource: String,
+        downbeatState: DownbeatLandingState,
+        progressionSize: Int,
+        candidates: List<String>,
+        keyCandidates: List<SongKeyEstimate>,
+        harmonySummary: String,
+    ): String {
+        val rootText = bassRootClass?.let { root -> "$root ${twoDecimals(rootConfidence)}" } ?: "--"
+        val phraseText = phraseLengthBars?.let { bars -> "${bars}b ${twoDecimals(phraseConfidence)}" } ?: "learn"
+        val slotText = phraseBarIndex.takeIf { it > 0 }?.let { "#$it" } ?: "--"
+        val oneText = downbeatState.beatNumber.takeIf { it > 0 }?.let { beat ->
+            "1->$beat:${twoDecimals(downbeatState.confidence)}:${downbeatState.root ?: "--"}"
+        } ?: "1->--"
+        val chordText = candidates.take(4).joinToString("/")
+        val keyText = keyCandidates.take(3).joinToString("/") { estimate ->
+            "${estimate.label}:${twoDecimals(estimate.confidence)}"
+        }
+        val harmonyText = harmonySummary.takeIf { it.isNotBlank() } ?: "--"
+        return "R$rootText BR${barRootClass ?: "--"} raw${chord ?: "--"} obs${observedChord ?: "--"} st${stableChord ?: "--"} bar${committedBarChord ?: "--"} P${phraseSource.ifBlank { "--" }}:$phraseText:$slotText/$progressionSize $oneText C[$chordText] K[$keyText] H[$harmonyText]"
+    }
+
+    private fun observeLearningProgression(
+        chord: RootThirdChord,
+        minConfirmFrames: Int = 1,
+    ) {
+        val core = chord.toMajorMinorCoreChord().label
+        if (pendingProgressionChord == core) {
+            pendingProgressionCount += 1
+        } else {
+            pendingProgressionChord = core
+            pendingProgressionCount = 1
+        }
+        if (pendingProgressionCount < minConfirmFrames.coerceAtLeast(1)) return
+        if (learningProgression.lastOrNull() == core) return
+        val lockedLength = learningLoopLength
+        if (lockedLength != null) {
+            val expected = learningProgression.getOrNull(learningLoopNextIndex)
+            if (expected == core) {
+                learningLoopNextIndex = (learningLoopNextIndex + 1).floorMod(lockedLength)
+                return
+            }
+            learningLoopLength = null
+            learningLoopNextIndex = 0
+            learningProgression.clear()
+        }
+        if (learningProgression.size >= 4 && learningProgression.firstOrNull() == core) {
+            learningLoopLength = learningProgression.size
+            learningLoopNextIndex = 1.floorMod(learningProgression.size)
+            return
+        }
+        learningProgression += core
+        while (learningProgression.size > 8) {
+            learningProgression.removeAt(0)
+        }
     }
 
     private fun dominantKeySuggestion(): String? {
@@ -1327,12 +1598,13 @@ private class RootThirdSongTracker {
         val total = scores.values.sum().coerceAtLeast(0.01f)
         if (best.value / total < 0.42f) return null
         if (runnerUp > 0f && best.value < runnerUp * 1.22f) return null
-        return best.key
+        return best.key.toPlainKeyLabel()
     }
 }
 
 private class BarChordTracker {
     private val chromaSum = FloatArray(TunerAnalyzerNoteClasses.size)
+    private val rootVotes = FloatArray(TunerAnalyzerNoteClasses.size)
     private val chordVotes = mutableMapOf<String, BarChordVote>()
     private var activeBarIndex: Long? = null
     private var frameCount = 0
@@ -1340,6 +1612,7 @@ private class BarChordTracker {
     fun update(
         chord: RootThirdChord,
         classLevels: FloatArray,
+        instantRootHint: ChordRootHint?,
         audioTimeMs: Long,
         tempoBpm: Int?,
         meter: Int,
@@ -1362,7 +1635,7 @@ private class BarChordTracker {
             null
         }
 
-        observe(chord, classLevels)
+        observe(chord, classLevels, instantRootHint)
         return committed
     }
 
@@ -1370,15 +1643,25 @@ private class BarChordTracker {
         activeBarIndex = null
         frameCount = 0
         chromaSum.fill(0f)
+        rootVotes.fill(0f)
         chordVotes.clear()
     }
 
-    private fun observe(chord: RootThirdChord, classLevels: FloatArray) {
+    private fun observe(
+        chord: RootThirdChord,
+        classLevels: FloatArray,
+        instantRootHint: ChordRootHint?,
+    ) {
         val peak = classLevels.maxOrNull()?.coerceAtLeast(0.0001f) ?: 0.0001f
         classLevels.forEachIndexed { index, level ->
             chromaSum[index] += level / peak
         }
         frameCount += 1
+        if (instantRootHint != null && instantRootHint.confidence >= 0.45f) {
+            rootVotes[instantRootHint.rootIndex] += instantRootHint.confidence
+        } else if (chord.confident) {
+            rootVotes[chord.rootIndex] += 0.38f
+        }
 
         val rootWeight = (classLevels.getOrNull(chord.rootIndex) ?: 0f) / peak
         val thirdWeight = chord.tones.getOrNull(1)
@@ -1399,21 +1682,28 @@ private class BarChordTracker {
         val totalWeight = chordVotes.values.sumOf { it.weight.toDouble() }.toFloat().coerceAtLeast(0.01f)
         val bestVote = chordVotes.values.maxByOrNull { it.weight } ?: return null
         if (bestVote.weight < totalWeight * 0.48f) return null
+        val barRootIndex = rootVotes.indices.maxByOrNull { rootVotes[it] }
+        val rootVoteTotal = rootVotes.sum().coerceAtLeast(0.01f)
+        val barRootConfidence = barRootIndex?.let { rootVotes[it] / rootVoteTotal } ?: 0f
+        if (barRootIndex != null && rootVoteTotal >= 0.9f && barRootConfidence >= 0.55f && bestVote.chord.rootIndex != barRootIndex) {
+            return null
+        }
 
         val averagedChroma = FloatArray(TunerAnalyzerNoteClasses.size) { index ->
             chromaSum[index] / frameCount.coerceAtLeast(1)
         }
-        val chromaChord = matchChromaChord(
-            classLevels = averagedChroma,
-            preferredRootIndex = bestVote.chord.rootIndex,
-            preferredRootConfidence = 0.82f,
-        )
-        val committedChord = when {
-            chromaChord != null && chromaChord.confident && chromaChord.rootIndex == bestVote.chord.rootIndex -> chromaChord
-            else -> bestVote.chord
+        if (barRootIndex == null) return null
+        val rootAgreesWithChord = bestVote.chord.rootIndex == barRootIndex
+        val hasStrongRootVote = rootVoteTotal >= 1.25f && barRootConfidence >= 0.58f
+        val hasRepeatedMidRootVote = rootAgreesWithChord && rootVoteTotal >= 0.9f && barRootConfidence >= 0.46f
+        if (!hasStrongRootVote && !hasRepeatedMidRootVote) return null
+        val rootChord = if (bestVote.chord.rootIndex == barRootIndex) {
+            bestVote.chord.toMajorMinorCoreChord()
+        } else {
+            bestVote.chord.copy(rootIndex = barRootIndex).asPlainRootChord()
         }
         return BarChordObservation(
-            chord = committedChord,
+            chord = rootChord,
             chroma = averagedChroma,
         )
     }
@@ -1422,26 +1712,102 @@ private class BarChordTracker {
         activeBarIndex = nextBarIndex
         frameCount = 0
         chromaSum.fill(0f)
+        rootVotes.fill(0f)
         chordVotes.clear()
     }
 
-    private fun barDurationMs(
-        tempoBpm: Int?,
-        meter: Int,
-    ): Long {
-        val beats = meter.coerceIn(2, 8)
-        val bpm = tempoBpm?.takeIf { it in 40..220 } ?: 120
-        return ((60_000f / bpm) * beats)
-            .roundToInt()
-            .toLong()
-            .coerceIn(900L, 8_000L)
-    }
+}
+
+private fun barDurationMs(
+    tempoBpm: Int?,
+    meter: Int,
+): Long {
+    val beats = meter.coerceIn(2, 8)
+    val bpm = tempoBpm?.takeIf { it in 40..220 } ?: 120
+    return ((60_000f / bpm) * beats)
+        .roundToInt()
+        .toLong()
+        .coerceIn(900L, 8_000L)
 }
 
 private data class BarChordVote(
     val chord: RootThirdChord,
     var weight: Float,
 )
+
+private class BassRootBarTracker {
+    private val rootWeights = FloatArray(TunerAnalyzerNoteClasses.size)
+    private var activeBarIndex: Long? = null
+    private var evidenceFrameCount = 0
+    private var lastCommittedHint: ChordRootHint? = null
+
+    fun update(
+        instantRootHint: ChordRootHint?,
+        audioTimeMs: Long,
+        tempoBpm: Int?,
+        meter: Int,
+        tempoConfident: Boolean,
+    ): ChordRootHint? {
+        if (!tempoConfident || tempoBpm == null) {
+            clear()
+            return instantRootHint?.takeIf { it.confidence >= 0.62f }
+        }
+
+        val barIndex = audioTimeMs / barDurationMs(tempoBpm, meter)
+        if (activeBarIndex == null) {
+            activeBarIndex = barIndex
+        } else if (activeBarIndex != barIndex) {
+            lastCommittedHint = currentHint(minConfidence = 0.42f) ?: lastCommittedHint?.weakened()
+            resetBar(barIndex)
+        }
+
+        observe(instantRootHint)
+        return currentHint(minConfidence = 0.34f)
+            ?: instantRootHint?.takeIf { it.confidence >= 0.72f }
+    }
+
+    fun clear() {
+        activeBarIndex = null
+        evidenceFrameCount = 0
+        lastCommittedHint = null
+        rootWeights.fill(0f)
+    }
+
+    private fun observe(hint: ChordRootHint?) {
+        if (hint == null || hint.confidence < 0.18f) return
+        evidenceFrameCount += 1
+        rootWeights[hint.rootIndex] += 0.18f + hint.confidence * hint.confidence
+    }
+
+    private fun currentHint(minConfidence: Float): ChordRootHint? {
+        if (evidenceFrameCount < 2) return null
+        val bestIndex = rootWeights.indices.maxByOrNull { rootWeights[it] } ?: return null
+        val best = rootWeights[bestIndex]
+        val total = rootWeights.sum().coerceAtLeast(0.001f)
+        if (best < 0.28f) return null
+        val runnerUp = rootWeights.indices
+            .filter { it != bestIndex }
+            .maxOfOrNull { rootWeights[it] }
+            ?: 0f
+        val share = best / total
+        val separation = if (runnerUp <= 0f) 1f else ((best / runnerUp) - 1f) / 1.1f
+        val sampleConfidence = (evidenceFrameCount / 5f).coerceIn(0f, 1f)
+        val confidence = (share * 0.58f + separation.coerceIn(0f, 1f) * 0.28f + sampleConfidence * 0.14f)
+            .coerceIn(0f, 1f)
+        if (confidence < minConfidence) return null
+        return ChordRootHint(rootIndex = bestIndex, confidence = confidence)
+    }
+
+    private fun resetBar(nextBarIndex: Long) {
+        activeBarIndex = nextBarIndex
+        evidenceFrameCount = 0
+        rootWeights.fill(0f)
+    }
+
+    private fun ChordRootHint.weakened(): ChordRootHint {
+        return copy(confidence = confidence * 0.72f)
+    }
+}
 
 private data class BarChordObservation(
     val chord: RootThirdChord,
@@ -1452,7 +1818,29 @@ private data class StructurePhraseState(
     val displayChords: List<String> = emptyList(),
     val phraseLengthBars: Int? = null,
     val phraseConfidence: Float = 0f,
+    val currentBarIndex: Int = 0,
 )
+
+private fun List<String>.currentBarIndexForHistory(historySize: Int): Int {
+    if (isEmpty() || historySize <= 0) return 0
+    return ((historySize - 1).floorMod(size)) + 1
+}
+
+private fun List<String>.toCompactLoopDisplay(): List<String> {
+    val compacted = fold(mutableListOf<String>()) { acc, chord ->
+        if (acc.lastOrNull() != chord) acc += chord
+        acc
+    }
+    if (compacted.size <= 1) return compacted
+    val maxLength = minOf(8, compacted.size)
+    for (length in 2..maxLength) {
+        val prefix = compacted.take(length)
+        if (compacted.indices.all { index -> compacted[index] == prefix[index.floorMod(length)] }) {
+            return prefix
+        }
+    }
+    return compacted.takeLast(STRUCTURE_MAX_DISPLAY_BARS)
+}
 
 private class StructurePhraseDetector {
     private val bars = mutableListOf<BarChordObservation>()
@@ -1498,32 +1886,103 @@ private class StructurePhraseDetector {
     private fun currentState(): StructurePhraseState {
         val phraseLength = lockedPhraseLength
         val display = when {
-            phraseLength != null && bars.size >= phraseLength -> bars.takeLast(phraseLength).map { it.chord.label }
+            phraseLength != null && bars.size >= phraseLength -> orientLockedPhrase(
+                bars.takeLast(phraseLength),
+            ).map { it.chord.label }
             else -> bars.takeLast(STRUCTURE_MAX_DISPLAY_BARS).map { it.chord.label }
         }
         return StructurePhraseState(
             displayChords = display,
             phraseLengthBars = phraseLength,
             phraseConfidence = lockedConfidence.coerceIn(0f, 1f),
+            currentBarIndex = display.currentBarIndexForHistory(bars.size),
         )
+    }
+
+    private fun orientLockedPhrase(phrase: List<BarChordObservation>): List<BarChordObservation> {
+        if (phrase.size < 4) return phrase
+        if (phrase.startsWithRepeatedMinorChord()) return phrase
+        val keyRootIndex = estimateStructureKeyRoot(phrase) ?: return phrase
+        val startIndex = phrase.indices
+            .filter { index -> phrase[index].chord.rootIndex == keyRootIndex }
+            .maxByOrNull { index -> phraseStartScore(phrase, index) }
+            ?: return phrase
+        if (startIndex == 0) return phrase
+        return phrase.drop(startIndex) + phrase.take(startIndex)
+    }
+
+    private fun List<BarChordObservation>.startsWithRepeatedMinorChord(): Boolean {
+        val first = firstOrNull()?.chord ?: return false
+        val second = getOrNull(1)?.chord ?: return false
+        return first.label.chordSuffix() == "m" && second.rootIndex == first.rootIndex
+    }
+
+    private fun estimateStructureKeyRoot(phrase: List<BarChordObservation>): Int? {
+        val chroma = FloatArray(TunerAnalyzerNoteClasses.size)
+        phrase.forEach { bar ->
+            bar.chroma.forEachIndexed { index, level -> chroma[index] += level }
+        }
+        val key = estimateSongKey(
+            chroma = chroma,
+            chordHistory = phrase.map { it.chord },
+            progression = phrase.map { it.chord.label },
+        )?.label ?: return null
+        return key.toPlainKeyLabel()
+            ?.removeSuffix("m")
+            ?.noteClassIndex()
+    }
+
+    private fun phraseStartScore(
+        phrase: List<BarChordObservation>,
+        index: Int,
+    ): Float {
+        val current = phrase[index].chord
+        val previous = phrase[(index - 1).floorMod(phrase.size)].chord
+        val next = phrase.getOrNull(index + 1)?.chord
+        var score = 1f
+        if (next?.rootIndex == current.rootIndex) score += 0.32f
+        if (previous.rootIndex == (current.rootIndex + 7).floorMod(TunerAnalyzerNoteClasses.size)) score += 0.42f
+        if (previous.rootIndex == (current.rootIndex + 5).floorMod(TunerAnalyzerNoteClasses.size)) score += 0.28f
+        if (current.label.chordSuffix() in listOf("", "m")) score += 0.08f
+        score -= index * 0.001f
+        return score
     }
 
     private fun detectBestPhrase(): StructurePhraseCandidate? {
         return STRUCTURE_PHRASE_LENGTHS
             .asSequence()
-            .filter { length -> bars.size >= length * 2 }
+            .filter { length -> bars.size >= length.requiredStructureBars() }
             .map { length ->
                 val current = bars.takeLast(length)
                 val previous = bars.dropLast(length).takeLast(length)
-                StructurePhraseCandidate(
-                    length = length,
-                    confidence = phraseSimilarity(previous, current),
-                    rootAgreement = phraseRootAgreement(previous, current),
-                )
+                if (length == 4) {
+                    val previousPrevious = bars.dropLast(length * 2).takeLast(length)
+                    StructurePhraseCandidate(
+                        length = length,
+                        confidence = min(
+                            phraseSimilarity(previousPrevious, previous),
+                            phraseSimilarity(previous, current),
+                        ),
+                        rootAgreement = min(
+                            phraseRootAgreement(previousPrevious, previous),
+                            phraseRootAgreement(previous, current),
+                        ),
+                    )
+                } else {
+                    StructurePhraseCandidate(
+                        length = length,
+                        confidence = phraseSimilarity(previous, current),
+                        rootAgreement = phraseRootAgreement(previous, current),
+                    )
+                }
             }
             .filter { candidate -> candidate.confidence >= STRUCTURE_MIN_CANDIDATE_CONFIDENCE }
             .filter { candidate -> candidate.rootAgreement >= STRUCTURE_ROOT_AGREEMENT_LOCK }
-            .maxWithOrNull(compareBy<StructurePhraseCandidate> { it.confidence }.thenBy { it.length })
+            .sortedWith(
+                compareByDescending<StructurePhraseCandidate> { it.confidence }
+                    .thenBy { it.length },
+            )
+            .firstOrNull()
     }
 
     private fun phraseSimilarity(
@@ -1570,6 +2029,10 @@ private data class StructurePhraseCandidate(
     val rootAgreement: Float,
 )
 
+private fun Int.requiredStructureBars(): Int {
+    return if (this == 4) this * 3 else this * 2
+}
+
 private val STRUCTURE_PHRASE_LENGTHS = listOf(4, 8, 12, 16)
 private const val STRUCTURE_MAX_DISPLAY_BARS = 16
 private const val STRUCTURE_BAR_HISTORY_LIMIT = 64
@@ -1577,13 +2040,6 @@ private const val STRUCTURE_MIN_CANDIDATE_CONFIDENCE = 0.7f
 private const val STRUCTURE_LOCK_CONFIDENCE = 0.78f
 private const val STRUCTURE_KEEP_CONFIDENCE = 0.42f
 private const val STRUCTURE_ROOT_AGREEMENT_LOCK = 0.86f
-
-private fun rootThirdChordGuess(
-    rootIndex: Int,
-    classLevels: FloatArray,
-): RootThirdChord? {
-    return matchChromaChord(classLevels, preferredRootIndex = rootIndex)
-}
 
 private data class ChromaChordTemplate(
     val suffix: String,
@@ -1661,6 +2117,281 @@ private fun matchChromaChordCandidates(
         }
         candidate.copy(chord = chord)
     }
+}
+
+private fun List<ChordCandidate>.groundedByRootEvidence(rootConfidence: Float): List<ChordCandidate> {
+    if (rootConfidence >= 0.25f) return this
+    return map { candidate ->
+        val score = candidate.emissionScore
+        val chord = candidate.chord
+        if (chord.confident && chord.label.hasExtendedOrSeventhColor()) {
+            candidate.copy(
+                chord = chord.asUncertainRoot().copy(score = score),
+                emissionScore = score - (0.08f * (1f - rootConfidence.coerceIn(0f, 1f))),
+            )
+        } else {
+            candidate
+        }
+    }
+}
+
+private fun List<ChordCandidate>.preferSongCoreHarmony(): List<ChordCandidate> {
+    val core = filter { candidate -> candidate.chord.label.isSongCoreHarmonyLabel() }
+    if (core.isNotEmpty()) return core
+    return take(4).map { candidate ->
+        candidate.copy(
+            chord = candidate.chord.asUncertainRoot().copy(score = candidate.emissionScore),
+            emissionScore = candidate.emissionScore - 0.1f,
+        )
+    }
+}
+
+private fun List<ChordCandidate>.preferMajorMinorCoreHarmony(classLevels: FloatArray): List<ChordCandidate> {
+    val mapped = map { candidate ->
+        val coreChord = candidate.chord.toMajorMinorCoreChord()
+        candidate.copy(
+            chord = coreChord.copy(score = candidate.emissionScore),
+            emissionScore = candidate.emissionScore +
+                coreChord.majorMinorCoreBonus() +
+                coreChord.majorMinorThirdEvidenceBonus(classLevels),
+        )
+    }
+    return mapped
+        .groupBy { it.chord.label }
+        .map { (_, candidates) -> candidates.maxBy { it.emissionScore } }
+        .sortedByDescending { it.emissionScore }
+        .take(4)
+}
+
+private fun rootAnchoredDisplayChord(
+    rootHint: ChordRootHint?,
+    classLevels: FloatArray,
+    candidate: RootThirdChord?,
+): RootThirdChord? {
+    val hint = rootHint?.takeIf { it.confidence >= 0.42f } ?: return candidate
+    val rootIndex = hint.rootIndex
+    val peak = classLevels.maxOrNull()?.coerceAtLeast(0.0001f) ?: return candidate
+    val rootLevel = classLevels[rootIndex] / peak
+    fun intervalLevel(offset: Int): Float {
+        return classLevels[(rootIndex + offset).floorMod(TunerAnalyzerNoteClasses.size)] / peak
+    }
+    val majorThird = intervalLevel(4)
+    val minorThird = intervalLevel(3)
+    val second = intervalLevel(2)
+    val fourth = intervalLevel(5)
+    val flatFifth = intervalLevel(6)
+    val fifth = intervalLevel(7)
+    val sharpFifth = intervalLevel(8)
+    val sixth = intervalLevel(9)
+    val flatSeventh = intervalLevel(10)
+    val majorSeventh = intervalLevel(11)
+    val sameRootCandidate = candidate?.takeIf { it.rootIndex == rootIndex }
+    val hasRootFrame = rootLevel >= 0.18f || fifth >= 0.18f || sameRootCandidate != null
+    val thirdFloor = if (hasRootFrame) 0.24f else 0.28f
+    val suspensionFloor = if (hasRootFrame) 0.42f else 0.5f
+    val delta = majorThird - minorThird
+    val clearMajor = hasRootFrame && majorThird >= thirdFloor && delta >= 0.11f
+    val clearMinor = hasRootFrame && minorThird >= thirdFloor && -delta >= 0.045f
+    val thirdEvidenceIsAbsent = max(majorThird, minorThird) < thirdFloor
+    val score = max(hint.confidence, candidate?.score ?: 0f).coerceIn(0f, 1f)
+    val thirdBeatsSuspension = max(majorThird, minorThird) > max(second, fourth) + 0.06f
+    val colorSuffix = rootColorSuffix(
+        second = second,
+        fourth = fourth,
+        flatFifth = flatFifth,
+        fifth = fifth,
+        sharpFifth = sharpFifth,
+        sixth = sixth,
+        flatSeventh = flatSeventh,
+        majorSeventh = majorSeventh,
+        hasRootFrame = hasRootFrame,
+    )
+    return when {
+        rootLevel >= 0.18f && fourth >= suspensionFloor && fourth > max(majorThird, minorThird) + 0.12f && fourth > second + 0.04f -> {
+            rootSuspendedChord(rootIndex = rootIndex, suffix = "sus4", score = score, colorSuffix = colorSuffix)
+        }
+        rootLevel >= 0.18f && second >= suspensionFloor && second > max(majorThird, minorThird) + 0.12f -> {
+            rootSuspendedChord(rootIndex = rootIndex, suffix = "sus2", score = score, colorSuffix = colorSuffix)
+        }
+        clearMajor && thirdBeatsSuspension -> rootQualityChord(rootIndex = rootIndex, minor = false, score = score, colorSuffix = colorSuffix)
+        clearMinor && thirdBeatsSuspension -> rootQualityChord(rootIndex = rootIndex, minor = true, score = score, colorSuffix = colorSuffix)
+        hasRootFrame && thirdEvidenceIsAbsent && fourth >= suspensionFloor && fourth > second + 0.04f -> {
+            rootSuspendedChord(rootIndex = rootIndex, suffix = "sus4", score = score, colorSuffix = colorSuffix)
+        }
+        hasRootFrame && thirdEvidenceIsAbsent && second >= suspensionFloor -> {
+            rootSuspendedChord(rootIndex = rootIndex, suffix = "sus2", score = score, colorSuffix = colorSuffix)
+        }
+        sameRootCandidate != null && !hasRootFrame -> {
+            rootOnlyChord(rootIndex = rootIndex, score = score)
+        }
+        sameRootCandidate != null -> rootOnlyChord(rootIndex = rootIndex, score = score.coerceAtLeast(sameRootCandidate.score))
+        else -> rootOnlyChord(rootIndex = rootIndex, score = score)
+    }
+}
+
+private fun rootQualityChord(
+    rootIndex: Int,
+    minor: Boolean,
+    score: Float,
+    colorSuffix: String = "",
+): RootThirdChord {
+    val root = TunerAnalyzerNoteClasses[rootIndex]
+    val thirdIndex = (rootIndex + if (minor) 3 else 4).floorMod(TunerAnalyzerNoteClasses.size)
+    val fifthIndex = (rootIndex + 7).floorMod(TunerAnalyzerNoteClasses.size)
+    val qualitySuffix = if (minor) "m" else ""
+    return RootThirdChord(
+        label = "$root$qualitySuffix$colorSuffix",
+        rootIndex = rootIndex,
+        tones = listOf(root, TunerAnalyzerNoteClasses[thirdIndex], TunerAnalyzerNoteClasses[fifthIndex]),
+        score = score,
+        confident = true,
+    )
+}
+
+private fun rootSuspendedChord(
+    rootIndex: Int,
+    suffix: String,
+    score: Float,
+    colorSuffix: String,
+): RootThirdChord {
+    val root = TunerAnalyzerNoteClasses[rootIndex]
+    val color = colorSuffix
+        .takeIf { it != suffix }
+        .takeIf { !(suffix == "sus2" && it == "add9") }
+        .orEmpty()
+    val suspensionIndex = (rootIndex + if (suffix == "sus4") 5 else 2).floorMod(TunerAnalyzerNoteClasses.size)
+    val fifthIndex = (rootIndex + 7).floorMod(TunerAnalyzerNoteClasses.size)
+    return RootThirdChord(
+        label = "$root$suffix$color",
+        rootIndex = rootIndex,
+        tones = listOf(root, TunerAnalyzerNoteClasses[suspensionIndex], TunerAnalyzerNoteClasses[fifthIndex]),
+        score = score,
+        confident = true,
+    )
+}
+
+private fun rootColorSuffix(
+    second: Float,
+    fourth: Float,
+    flatFifth: Float,
+    fifth: Float,
+    sharpFifth: Float,
+    sixth: Float,
+    flatSeventh: Float,
+    majorSeventh: Float,
+    hasRootFrame: Boolean,
+): String {
+    if (!hasRootFrame) return ""
+    return when {
+        flatSeventh >= 0.18f && flatSeventh > majorSeventh + 0.05f -> "7"
+        majorSeventh >= 0.18f && majorSeventh > flatSeventh + 0.05f -> "maj7"
+        sixth >= 0.2f && sixth > flatSeventh + 0.06f -> "6"
+        sharpFifth >= 0.22f && sharpFifth > fifth + 0.08f -> "aug"
+        flatFifth >= 0.22f && flatFifth > fifth + 0.08f -> "b5"
+        second >= 0.28f && fourth < 0.16f -> "add9"
+        else -> ""
+    }
+}
+
+private fun rootOnlyChord(
+    rootIndex: Int,
+    score: Float,
+): RootThirdChord {
+    val root = TunerAnalyzerNoteClasses[rootIndex]
+    val fifthIndex = (rootIndex + 7).floorMod(TunerAnalyzerNoteClasses.size)
+    return RootThirdChord(
+        label = root,
+        rootIndex = rootIndex,
+        tones = listOf(root, "--", TunerAnalyzerNoteClasses[fifthIndex]),
+        score = score,
+        confident = true,
+    )
+}
+
+private fun uncertainRootChord(
+    rootIndex: Int,
+    score: Float,
+): RootThirdChord {
+    val root = TunerAnalyzerNoteClasses[rootIndex]
+    val fifthIndex = (rootIndex + 7).floorMod(TunerAnalyzerNoteClasses.size)
+    return RootThirdChord(
+        label = "$root?",
+        rootIndex = rootIndex,
+        tones = listOf(root, "--", TunerAnalyzerNoteClasses[fifthIndex]),
+        score = score,
+        confident = false,
+    )
+}
+
+private fun RootThirdChord.toMajorMinorCoreChord(): RootThirdChord {
+    val root = TunerAnalyzerNoteClasses[rootIndex]
+    val suffix = label.chordSuffix()
+    val minor = suffix.startsWith("m") && !suffix.startsWith("maj")
+    val thirdOffset = if (minor) 3 else 4
+    val fifthIndex = (rootIndex + 7).floorMod(TunerAnalyzerNoteClasses.size)
+    val thirdIndex = (rootIndex + thirdOffset).floorMod(TunerAnalyzerNoteClasses.size)
+    return copy(
+        label = if (minor) "${root}m" else root,
+        tones = listOf(root, TunerAnalyzerNoteClasses[thirdIndex], TunerAnalyzerNoteClasses[fifthIndex]),
+        confident = confident,
+    )
+}
+
+private fun RootThirdChord.majorMinorCoreBonus(): Float {
+    return when (label.chordSuffix()) {
+        "", "m" -> 0.035f
+        "7", "m7", "maj7" -> 0.015f
+        else -> 0f
+    }
+}
+
+private fun RootThirdChord.majorMinorThirdEvidenceBonus(classLevels: FloatArray): Float {
+    val peak = classLevels.maxOrNull()?.coerceAtLeast(0.0001f) ?: return 0f
+    val majorThird = classLevels[(rootIndex + 4).floorMod(TunerAnalyzerNoteClasses.size)] / peak
+    val minorThird = classLevels[(rootIndex + 3).floorMod(TunerAnalyzerNoteClasses.size)] / peak
+    val thirdDelta = if (label.chordSuffix() == "m") {
+        minorThird - majorThird
+    } else {
+        majorThird - minorThird
+    }
+    return (thirdDelta * 0.22f).coerceIn(-0.16f, 0.16f)
+}
+
+private fun RootThirdChord.asPlainRootChord(): RootThirdChord {
+    val fifthIndex = (rootIndex + 7).floorMod(TunerAnalyzerNoteClasses.size)
+    val root = TunerAnalyzerNoteClasses[rootIndex]
+    return copy(
+        label = root,
+        tones = listOf(root, "--", TunerAnalyzerNoteClasses[fifthIndex]),
+        confident = true,
+        score = score.coerceAtMost(0.72f),
+    )
+}
+
+private fun String.isSongCoreHarmonyLabel(): Boolean {
+    if (endsWith("?")) return true
+    val suffix = chordSuffix()
+    return suffix.isBlank() ||
+        suffix == "m" ||
+        suffix == "7" ||
+        suffix == "m7" ||
+        suffix == "sus2" ||
+        suffix == "sus4" ||
+        suffix == "7sus4"
+}
+
+private fun String.isMajorMinorCoreLabel(): Boolean {
+    val suffix = chordSuffix()
+    return suffix.isBlank() || suffix == "m"
+}
+
+private fun String.chordSuffix(): String {
+    val root = take(2).takeIf { it.length == 2 && (it[1] == '#' || it[1] == 'b') } ?: take(1)
+    return removePrefix(root)
+}
+
+private fun String.hasExtendedOrSeventhColor(): Boolean {
+    return contains("7") || contains("6") || contains("9") || contains("sus") || contains("aug") || contains("dim")
 }
 
 private fun normalizedChroma(classLevels: FloatArray): FloatArray? {
@@ -1759,10 +2490,182 @@ private fun estimateSongKey(
     chordHistory: List<RootThirdChord>,
     progression: List<String>,
 ): SongKeyEstimate? {
-    val chromaCandidates = krumhanslKeyCandidates(chroma)
-    if (chromaCandidates.isEmpty() && chordHistory.size < 4) return null
+    return selectStableSongKey(estimateSongKeyCandidates(chroma, chordHistory, progression))
+}
 
-    val candidates = TunerAnalyzerNoteClasses.indices.flatMap { rootIndex ->
+private data class ParsedTheoryLabel(
+    val root: String,
+    val rootIndex: Int,
+    val suffix: String,
+)
+
+private fun functionalHarmonyInfo(
+    keyLabel: String?,
+    chordLabel: String?,
+): FunctionalHarmonyInfo? {
+    val key = keyLabel?.parseTheoryLabel() ?: return null
+    val chord = chordLabel?.parseTheoryLabel() ?: return null
+    val keyIsMinor = key.suffix.startsWith("m")
+    val interval = (chord.rootIndex - key.rootIndex).floorMod(TunerAnalyzerNoteClasses.size)
+    val chordQuality = chord.functionalQuality()
+    val roman = functionalRoman(interval, keyIsMinor, chordQuality, chord.suffix)
+    val tags = functionalTags(interval, keyIsMinor, chord, chordQuality)
+    return FunctionalHarmonyInfo(
+        roman = roman,
+        function = primaryHarmonyFunction(interval, tags),
+        tags = tags,
+    )
+}
+
+private fun FunctionalHarmonyInfo.compactHarmonySummary(): String {
+    val tagText = tags
+        .filterNot { tag -> tag == function }
+        .take(2)
+        .joinToString(" ")
+    return listOf(roman, function, tagText)
+        .filter { it.isNotBlank() }
+        .joinToString(" ")
+}
+
+private fun String.parseTheoryLabel(): ParsedTheoryLabel? {
+    val root = take(2).takeIf { it.length == 2 && (it[1] == '#' || it[1] == 'b') } ?: take(1)
+    val rootIndex = (SongFlatNoteClassAliases[root] ?: root).noteClassIndex() ?: return null
+    return ParsedTheoryLabel(
+        root = root,
+        rootIndex = rootIndex,
+        suffix = removePrefix(root),
+    )
+}
+
+private enum class FunctionalChordQuality {
+    Major,
+    Minor,
+    Dominant,
+    Diminished,
+    HalfDiminished,
+    Suspended,
+    RootOnly,
+}
+
+private fun ParsedTheoryLabel.functionalQuality(): FunctionalChordQuality {
+    return when {
+        suffix.isBlank() -> FunctionalChordQuality.Major
+        suffix == "m" || suffix.startsWith("m6") || suffix.startsWith("m9") -> FunctionalChordQuality.Minor
+        suffix.startsWith("m7b5") -> FunctionalChordQuality.HalfDiminished
+        suffix.startsWith("dim") -> FunctionalChordQuality.Diminished
+        suffix.contains("sus") -> FunctionalChordQuality.Suspended
+        suffix.startsWith("7") || suffix.contains("7#") || suffix.contains("7b") || suffix.endsWith("alt") ||
+            suffix.contains("13") || suffix.contains("9") -> FunctionalChordQuality.Dominant
+        suffix.startsWith("maj") || suffix.startsWith("6") || suffix.startsWith("add") ||
+            suffix.startsWith("aug") -> FunctionalChordQuality.Major
+        else -> FunctionalChordQuality.RootOnly
+    }
+}
+
+private fun functionalRoman(
+    interval: Int,
+    keyIsMinor: Boolean,
+    quality: FunctionalChordQuality,
+    suffix: String,
+): String {
+    val base = when (interval) {
+        0 -> if (keyIsMinor) "i" else "I"
+        1 -> "bII"
+        2 -> if (quality == FunctionalChordQuality.Minor) "ii" else "II"
+        3 -> if (keyIsMinor) "III" else "bIII"
+        4 -> "III"
+        5 -> if (quality == FunctionalChordQuality.Minor) "iv" else "IV"
+        6 -> "bV"
+        7 -> "V"
+        8 -> "bVI"
+        9 -> if (quality == FunctionalChordQuality.Minor) "vi" else "VI"
+        10 -> "bVII"
+        11 -> "VII"
+        else -> "?"
+    }
+    val color = when (quality) {
+        FunctionalChordQuality.Dominant -> if (suffix.contains("7") || suffix.contains("9") || suffix.contains("13")) "7" else ""
+        FunctionalChordQuality.Diminished -> "dim"
+        FunctionalChordQuality.HalfDiminished -> "m7b5"
+        FunctionalChordQuality.Suspended -> "sus"
+        else -> ""
+    }
+    return "$base$color"
+}
+
+private fun functionalTags(
+    interval: Int,
+    keyIsMinor: Boolean,
+    chord: ParsedTheoryLabel,
+    quality: FunctionalChordQuality,
+): List<String> {
+    val tags = mutableListOf<String>()
+    when (interval) {
+        0 -> tags += "tonic"
+        2, 5 -> if (quality != FunctionalChordQuality.Dominant) tags += "predominant"
+        7 -> tags += "dominant"
+    }
+    if (!keyIsMinor && interval in setOf(3, 5, 8, 10) && (quality == FunctionalChordQuality.Minor || interval != 5)) {
+        tags += "borrowed"
+    }
+    if (keyIsMinor && interval in setOf(8, 10)) {
+        tags += "minor color"
+    }
+    if (quality == FunctionalChordQuality.Dominant && interval != 7) {
+        tags += secondaryDominantTag(chord.rootIndex)
+    }
+    if (quality == FunctionalChordQuality.Dominant && chord.suffix.isAlteredDominantSuffix()) {
+        tags += "altered dominant"
+    }
+    if (quality == FunctionalChordQuality.Diminished || quality == FunctionalChordQuality.HalfDiminished) {
+        tags += if (quality == FunctionalChordQuality.HalfDiminished) "half-diminished" else "diminished"
+        tags += "leading/passing"
+    }
+    if (quality == FunctionalChordQuality.Suspended) {
+        tags += "suspended"
+    }
+    return tags.distinct()
+}
+
+private fun secondaryDominantTag(rootIndex: Int): String {
+    val targetIndex = (rootIndex + 5).floorMod(TunerAnalyzerNoteClasses.size)
+    return "secondary dominant V/${TunerAnalyzerNoteClasses[targetIndex]}"
+}
+
+private fun String.isAlteredDominantSuffix(): Boolean {
+    return contains("alt") ||
+        contains("#9") ||
+        contains("b9") ||
+        contains("#5") ||
+        contains("b13") ||
+        contains("#11") ||
+        startsWith("7aug") ||
+        startsWith("aug")
+}
+
+private fun primaryHarmonyFunction(
+    interval: Int,
+    tags: List<String>,
+): String {
+    return when {
+        "tonic" in tags -> "tonic"
+        "dominant" in tags || tags.any { it.startsWith("secondary dominant") } -> "dominant"
+        "predominant" in tags -> "predominant"
+        "leading/passing" in tags -> "passing"
+        interval in setOf(3, 8, 10) -> "color"
+        else -> "color"
+    }
+}
+
+private fun estimateSongKeyCandidates(
+    chroma: FloatArray,
+    chordHistory: List<RootThirdChord>,
+    progression: List<String>,
+): List<SongKeyEstimate> {
+    val chromaCandidates = krumhanslKeyCandidates(chroma)
+    if (chromaCandidates.isEmpty() && chordHistory.size < 4) return emptyList()
+
+    return TunerAnalyzerNoteClasses.indices.flatMap { rootIndex ->
         listOf(
             SongKeyEstimate(
                 label = TunerAnalyzerNoteClasses[rootIndex],
@@ -1774,9 +2677,16 @@ private fun estimateSongKey(
             ),
         )
     }.sortedByDescending { it.confidence }
+        .take(8)
+}
+
+private fun selectStableSongKey(candidates: List<SongKeyEstimate>): SongKeyEstimate? {
     val best = candidates.firstOrNull() ?: return null
     val runnerUp = candidates.drop(1).firstOrNull()?.confidence ?: 0f
     if (best.confidence < 0.36f) return null
+    if (best.label.endsWith("m")) {
+        return best
+    }
     if (runnerUp > 0f && best.confidence < runnerUp + 0.045f) return null
     return best
 }
@@ -1791,7 +2701,12 @@ private fun combinedKeyScore(
     val label = if (minor) "${TunerAnalyzerNoteClasses[rootIndex]}m" else TunerAnalyzerNoteClasses[rootIndex]
     val chromaScore = chromaCandidates.firstOrNull { it.label == label }?.confidence ?: 0f
     val chordScore = chordKeyEvidenceScore(rootIndex, minor, chordHistory, progression)
-    return chromaScore * 0.62f + chordScore * 0.38f
+    val hasChordEvidence = progression.size >= 3 || chordHistory.size >= 6
+    return if (hasChordEvidence) {
+        chromaScore * 0.42f + chordScore * 0.58f
+    } else {
+        chromaScore * 0.62f + chordScore * 0.38f
+    }
 }
 
 private fun chordKeyEvidenceScore(
@@ -1817,25 +2732,34 @@ private fun chordKeyEvidenceScore(
     val fourth = rootWeight(5)
     val fifth = rootWeight(7)
     val relative = if (minor) rootWeight(3) else rootWeight(9)
-    val firstRoot = roots.firstOrNull()?.rootIndex
-    val lastRoot = roots.lastOrNull()?.rootIndex
-    val firstSupport = if (firstRoot == rootIndex) 0.16f else 0f
-    val lastSupport = if (lastRoot == rootIndex) 0.12f else 0f
+    val first = roots.firstOrNull()
+    val last = roots.lastOrNull()
+    val firstSupport = if (first?.rootIndex == rootIndex) {
+        if (minor && first.quality == SongChordQuality.Minor) 0.24f else 0.16f
+    } else {
+        0f
+    }
+    val lastSupport = if (last?.rootIndex == rootIndex) {
+        if (minor && last.quality == SongChordQuality.Minor) 0.2f else 0.12f
+    } else {
+        0f
+    }
     val cadenceSupport = cadenceScore(rootIndex, minor, roots)
     val qualitySupport = roots.filter { it.rootIndex == rootIndex }.sumOf { vote ->
         when {
-            minor && vote.quality == SongChordQuality.Minor -> 0.12
-            !minor && vote.quality == SongChordQuality.Major -> 0.1
+            minor && vote.quality == SongChordQuality.Minor -> 0.2
+            !minor && vote.quality == SongChordQuality.Major -> 0.11
             !minor && vote.quality == SongChordQuality.Dominant -> 0.06
             else -> 0.0
         }
-    }.toFloat().coerceAtMost(0.2f)
+    }.toFloat().coerceAtMost(if (minor) 0.34f else 0.22f)
+    val relativeWeight = if (minor) 0.06f else 0.015f
 
     return (
-        tonic * 0.42f +
+        tonic * if (minor) 0.5f else 0.42f +
             fourth * 0.16f +
             fifth * 0.2f +
-            relative * 0.08f +
+            relative * relativeWeight +
             firstSupport +
             lastSupport +
             cadenceSupport +
@@ -1969,12 +2893,308 @@ internal object TunerTheoryTestApi {
     fun matchWeightedChord(
         weightedNotes: Map<String, Float>,
         preferredRoot: String? = null,
+        rootConfidence: Float = if (preferredRoot != null) 1f else 0f,
     ): String? {
         return matchChromaChord(
             classLevels = weightedNotes.toSyntheticChroma(),
             preferredRootIndex = preferredRoot?.toNoteClass()?.noteClassIndex(),
-            preferredRootConfidence = if (preferredRoot != null) 1f else 0f,
+            preferredRootConfidence = rootConfidence,
         )?.label
+    }
+
+    fun matchWeightedChordGrounded(
+        weightedNotes: Map<String, Float>,
+        preferredRoot: String? = null,
+        rootConfidence: Float = if (preferredRoot != null) 1f else 0f,
+    ): String? {
+        return matchChromaChordCandidates(
+            classLevels = weightedNotes.toSyntheticChroma(),
+            preferredRootIndex = preferredRoot?.toNoteClass()?.noteClassIndex(),
+            preferredRootConfidence = rootConfidence,
+        ).groundedByRootEvidence(rootConfidence).firstOrNull()?.chord?.label
+    }
+
+    fun matchWeightedSongCoreChord(
+        weightedNotes: Map<String, Float>,
+        preferredRoot: String? = null,
+        rootConfidence: Float = if (preferredRoot != null) 1f else 0f,
+    ): String? {
+        return matchChromaChordCandidates(
+            classLevels = weightedNotes.toSyntheticChroma(),
+            preferredRootIndex = preferredRoot?.toNoteClass()?.noteClassIndex(),
+            preferredRootConfidence = rootConfidence,
+        )
+            .groundedByRootEvidence(rootConfidence)
+            .preferSongCoreHarmony()
+            .firstOrNull()
+            ?.chord
+            ?.label
+    }
+
+    fun matchWeightedMajorMinorCoreChord(
+        weightedNotes: Map<String, Float>,
+        preferredRoot: String? = null,
+        rootConfidence: Float = if (preferredRoot != null) 1f else 0f,
+    ): String? {
+        val chroma = weightedNotes.toSyntheticChroma()
+        return matchChromaChordCandidates(
+            classLevels = chroma,
+            preferredRootIndex = preferredRoot?.toNoteClass()?.noteClassIndex(),
+            preferredRootConfidence = rootConfidence,
+        )
+            .groundedByRootEvidence(rootConfidence)
+            .preferMajorMinorCoreHarmony(chroma)
+            .firstOrNull()
+            ?.chord
+            ?.label
+    }
+
+    fun matchRootAnchoredDisplayChord(
+        weightedNotes: Map<String, Float>,
+        preferredRoot: String,
+        rootConfidence: Float = 0.82f,
+    ): String? {
+        return matchRootAnchoredDisplayChordDetails(
+            weightedNotes = weightedNotes,
+            preferredRoot = preferredRoot,
+            rootConfidence = rootConfidence,
+        )?.first
+    }
+
+    fun matchRootAnchoredDisplayChordDetails(
+        weightedNotes: Map<String, Float>,
+        preferredRoot: String,
+        rootConfidence: Float = 0.82f,
+    ): Pair<String, List<String>>? {
+        val chroma = weightedNotes.toSyntheticChroma()
+        val rootIndex = preferredRoot.toNoteClass()?.noteClassIndex() ?: return null
+        val candidates = matchChromaChordCandidates(
+            classLevels = chroma,
+            preferredRootIndex = rootIndex,
+            preferredRootConfidence = rootConfidence,
+        )
+            .groundedByRootEvidence(rootConfidence)
+            .preferMajorMinorCoreHarmony(chroma)
+        return rootAnchoredDisplayChord(
+            rootHint = ChordRootHint(rootIndex = rootIndex, confidence = rootConfidence),
+            classLevels = chroma,
+            candidate = candidates.firstOrNull()?.chord,
+        )?.let { chord -> chord.label to chord.tones }
+    }
+
+    fun learnedMajorMinorProgression(
+        chordLabels: List<String>,
+        weightedNotes: Map<String, Float> = emptyMap(),
+        tempoBpm: Int = 96,
+        meter: Int = 4,
+        frameStepMs: Long = 320L,
+    ): List<String> {
+        val tracker = RootThirdSongTracker()
+        var progression = emptyList<String>()
+        val fallbackChroma = weightedNotes
+            .takeIf { it.isNotEmpty() }
+            ?.toSyntheticChroma()
+        chordLabels.forEachIndexed { index, label ->
+            val chord = label.toRootThirdChordForTest(score = 0.88f) ?: return@forEachIndexed
+            val chroma = fallbackChroma ?: chord.tones.filterNot { it == "--" }.toSyntheticChroma()
+            val context = tracker.update(
+                preferredRootIndex = chord.rootIndex,
+                preferredRootConfidence = 0.82f,
+                subBassRootClass = TunerAnalyzerNoteClasses[chord.rootIndex],
+                subBassRootConfidence = 0.82f,
+                bandBassRootClass = TunerAnalyzerNoteClasses[chord.rootIndex],
+                bandBassRootConfidence = 0.82f,
+                classLevels = chroma,
+                audioTimeMs = index * frameStepMs,
+                tempoBpm = tempoBpm,
+                activeBeatIndex = -1,
+                meter = meter,
+                tempoConfident = false,
+            )
+            progression = context.progression
+        }
+        return progression
+    }
+
+    fun learnedMajorMinorProgressionFromWeightedFrames(
+        frames: List<Pair<String, Map<String, Float>>>,
+        tempoBpm: Int = 96,
+        meter: Int = 4,
+        frameStepMs: Long = 320L,
+        tempoConfident: Boolean = false,
+    ): List<String> {
+        val tracker = RootThirdSongTracker()
+        var progression = emptyList<String>()
+        frames.forEachIndexed { index, (root, weightedNotes) ->
+            val rootIndex = root.toNoteClass()?.noteClassIndex() ?: return@forEachIndexed
+            val context = tracker.update(
+                preferredRootIndex = rootIndex,
+                preferredRootConfidence = 0.82f,
+                subBassRootClass = TunerAnalyzerNoteClasses[rootIndex],
+                subBassRootConfidence = 0.82f,
+                bandBassRootClass = TunerAnalyzerNoteClasses[rootIndex],
+                bandBassRootConfidence = 0.82f,
+                classLevels = weightedNotes.toSyntheticChroma(),
+                audioTimeMs = index * frameStepMs,
+                tempoBpm = tempoBpm,
+                activeBeatIndex = if (tempoConfident) index.floorMod(meter.coerceIn(2, 8)) else -1,
+                meter = meter,
+                tempoConfident = tempoConfident,
+            )
+            progression = context.progression
+        }
+        return progression
+    }
+
+    fun downbeatGuessFromWeightedFrames(
+        frames: List<Pair<String, Map<String, Float>>>,
+        tempoBpm: Int = 120,
+        meter: Int = 4,
+        frameStepMs: Long = 500L,
+    ): Pair<Int, Float> {
+        val tracker = RootThirdSongTracker()
+        var beat = 0
+        var confidence = 0f
+        frames.forEachIndexed { index, (root, weightedNotes) ->
+            val rootIndex = root.toNoteClass()?.noteClassIndex() ?: return@forEachIndexed
+            val context = tracker.update(
+                preferredRootIndex = rootIndex,
+                preferredRootConfidence = 0.82f,
+                subBassRootClass = TunerAnalyzerNoteClasses[rootIndex],
+                subBassRootConfidence = 0.82f,
+                bandBassRootClass = TunerAnalyzerNoteClasses[rootIndex],
+                bandBassRootConfidence = 0.82f,
+                classLevels = weightedNotes.toSyntheticChroma(),
+                audioTimeMs = index * frameStepMs,
+                tempoBpm = tempoBpm,
+                activeBeatIndex = index.floorMod(meter.coerceIn(2, 8)),
+                meter = meter,
+                tempoConfident = true,
+            )
+            beat = context.downbeatGuess
+            confidence = context.downbeatConfidence
+        }
+        return beat to confidence
+    }
+
+    fun committedBarChordsFromWeightedFrames(
+        frames: List<Pair<String, Map<String, Float>>>,
+        tempoBpm: Int = 96,
+        meter: Int = 4,
+        frameStepMs: Long = 320L,
+    ): List<String> {
+        val tracker = BarChordTracker()
+        val committed = mutableListOf<String>()
+        frames.forEachIndexed { index, (root, weightedNotes) ->
+            val rootIndex = root.toNoteClass()?.noteClassIndex() ?: return@forEachIndexed
+            val chord = matchChromaChordCandidates(
+                classLevels = weightedNotes.toSyntheticChroma(),
+                preferredRootIndex = rootIndex,
+                preferredRootConfidence = 0.82f,
+            )
+                .groundedByRootEvidence(0.82f)
+                .preferMajorMinorCoreHarmony(weightedNotes.toSyntheticChroma())
+                .firstOrNull()
+                ?.chord
+                ?: return@forEachIndexed
+            val observation = tracker.update(
+                chord = chord,
+                classLevels = weightedNotes.toSyntheticChroma(),
+                instantRootHint = ChordRootHint(rootIndex = rootIndex, confidence = 0.82f),
+                audioTimeMs = index * frameStepMs,
+                tempoBpm = tempoBpm,
+                meter = meter,
+                tempoConfident = true,
+            )
+            observation?.chord?.label?.let { label -> committed += label }
+        }
+        return committed
+    }
+
+    fun barBassRoots(
+        rootFrames: List<Pair<String?, Float>>,
+        tempoBpm: Int = 96,
+        meter: Int = 4,
+        frameStepMs: Long = 280L,
+    ): List<String> {
+        val tracker = BassRootBarTracker()
+        return rootFrames.mapIndexed { index, (root, confidence) ->
+            val hint = root
+                ?.toNoteClass()
+                ?.noteClassIndex()
+                ?.let { rootIndex -> ChordRootHint(rootIndex = rootIndex, confidence = confidence) }
+            tracker.update(
+                instantRootHint = hint,
+                audioTimeMs = index * frameStepMs,
+                tempoBpm = tempoBpm,
+                meter = meter,
+                tempoConfident = true,
+            )?.rootIndex?.let { TunerAnalyzerNoteClasses[it] } ?: "--"
+        }
+    }
+
+    fun dominantRootWithOctaveSupport(
+        weightedNotes: Map<String, Float>,
+        octaveCounts: Map<String, Int> = emptyMap(),
+    ): Pair<String?, Float> {
+        val counts = IntArray(TunerAnalyzerNoteClasses.size)
+        octaveCounts.forEach { (note, count) ->
+            note.toNoteClass()
+                ?.noteClassIndex()
+                ?.let { index -> counts[index] = count }
+        }
+        val evidence = dominantChromaRootEvidence(
+            classLevels = weightedNotes.toSyntheticChroma(),
+            octaveCounts = counts,
+            minPeak = 0.2f,
+            dominanceRatio = 1.08f,
+        )
+        return evidence?.label to (evidence?.confidence ?: 0f)
+    }
+
+    fun selectedSongRootEvidence(
+        subBass: Pair<String, Float>?,
+        bass: Pair<String, Float>?,
+        pitch: Pair<String, Float>? = null,
+    ): Pair<String?, Float> {
+        val evidence = selectSongRootEvidence(
+            subBass = subBass?.let { (label, confidence) -> ChordRootEvidence(label, confidence) },
+            bass = bass?.let { (label, confidence) -> ChordRootEvidence(label, confidence) },
+            pitch = pitch?.let { (label, confidence) -> ChordRootEvidence(label, confidence) },
+        )
+        return evidence?.label to (evidence?.confidence ?: 0f)
+    }
+
+    fun committedBarChord(
+        frameChords: List<String>,
+        weightedNotes: Map<String, Float>,
+        rootFrames: List<Pair<String?, Float>> = emptyList(),
+        tempoBpm: Int = 120,
+        meter: Int = 4,
+        frameStepMs: Long = 1_100L,
+    ): String? {
+        val tracker = BarChordTracker()
+        var committed: BarChordObservation? = null
+        frameChords.forEachIndexed { index, label ->
+            val chord = label.toRootThirdChordForTest(score = 0.9f) ?: return@forEachIndexed
+            val rootHint = rootFrames.getOrNull(index)
+                ?.let { (root, confidence) ->
+                    root
+                        ?.toNoteClass()
+                        ?.noteClassIndex()
+                        ?.let { rootIndex -> ChordRootHint(rootIndex = rootIndex, confidence = confidence) }
+                }
+            committed = tracker.update(
+                chord = chord,
+                classLevels = weightedNotes.toSyntheticChroma(),
+                instantRootHint = rootHint,
+                audioTimeMs = index * frameStepMs,
+                tempoBpm = tempoBpm,
+                meter = meter,
+                tempoConfident = true,
+            ) ?: committed
+        }
+        return committed?.chord?.label
     }
 
     fun detectKey(weightedNotes: Map<String, Float>): String? {
@@ -2002,6 +3222,41 @@ internal object TunerTheoryTestApi {
         return estimateSongKey(chroma, chords, progression)?.label
     }
 
+    fun functionalHarmony(
+        keyLabel: String,
+        chordLabel: String,
+    ): FunctionalHarmonyInfo? {
+        return functionalHarmonyInfo(keyLabel, chordLabel)
+    }
+
+    fun functionalHarmonySummary(
+        keyLabel: String,
+        chordLabel: String,
+    ): String {
+        return functionalHarmonyInfo(keyLabel, chordLabel)?.compactHarmonySummary().orEmpty()
+    }
+
+    fun cleanedSongChromaForTest(
+        subBass: Map<String, Float> = emptyMap(),
+        bass: Map<String, Float> = emptyMap(),
+        lowMid: Map<String, Float> = emptyMap(),
+        mid: Map<String, Float> = emptyMap(),
+        high: Map<String, Float> = emptyMap(),
+        full: Map<String, Float> = emptyMap(),
+    ): Map<String, Float> {
+        val cleaned = cleanedSongChroma(
+            subBassLevels = subBass.toSyntheticChroma(),
+            bassLevels = bass.toSyntheticChroma(),
+            lowMidLevels = lowMid.toSyntheticChroma(),
+            midLevels = mid.toSyntheticChroma(),
+            highLevels = high.toSyntheticChroma(),
+            fullLevels = full.toSyntheticChroma(),
+        )
+        return TunerAnalyzerNoteClasses
+            .mapIndexed { index, note -> note to cleaned[index] }
+            .toMap()
+    }
+
     fun smoothCandidateLabels(frames: List<List<Pair<String, Float>>>): List<String> {
         val smoother = ChordSequenceSmoother()
         return frames.map { frame ->
@@ -2027,6 +3282,21 @@ internal object TunerTheoryTestApi {
             )
         }
         return Triple(state.displayChords, state.phraseLengthBars, state.phraseConfidence)
+    }
+
+    fun detectStructureBarIndex(chordLabels: List<String>): Pair<Int, Boolean> {
+        val detector = StructurePhraseDetector()
+        var state = StructurePhraseState()
+        chordLabels.forEach { label ->
+            val chord = label.toRootThirdChordForTest(score = 0.88f) ?: return@forEach
+            state = detector.observe(
+                BarChordObservation(
+                    chord = chord,
+                    chroma = chord.tones.filterNot { it == "--" }.toSyntheticChroma(),
+                ),
+            )
+        }
+        return state.currentBarIndex to (state.phraseLengthBars != null)
     }
 
     private fun List<String>.toSyntheticChroma(): FloatArray {
@@ -2128,7 +3398,7 @@ private class ChordSequenceSmoother {
     }
 }
 
-private const val CHORD_SMOOTHER_HISTORY_BEATS = 10
+private const val CHORD_SMOOTHER_HISTORY_BEATS = 6
 
 private fun chordTransitionScore(
     previous: RootThirdChord,
@@ -2503,6 +3773,14 @@ private fun String.toCoreProgressionChord(): String? {
     return "$root$coreSuffix"
 }
 
+private fun String.toPlainKeyLabel(): String? {
+    val root = take(2).takeIf { it.length == 2 && (it[1] == '#' || it[1] == 'b') } ?: take(1)
+    val normalizedRoot = SongFlatNoteClassAliases[root] ?: root
+    if (SongKeyNoteClasses.indexOf(normalizedRoot) < 0) return null
+    val suffix = removePrefix(root)
+    return if (suffix.startsWith("m")) "${root}m" else root
+}
+
 private fun String.withScalarMinorQuality(scalarKey: String?): String {
     if (contains("m")) return this
     val scalar = scalarKey ?: return this
@@ -2703,11 +3981,6 @@ private fun centsBetween(
     return 1200f * log2(frequency / reference)
 }
 
-private fun threeDecimals(value: Float): String {
-    return (value * 1_000f).roundToInt()
-        .let { scaled -> "${scaled / 1_000}.${(scaled % 1_000).toString().padStart(3, '0')}" }
-}
-
 private fun twoDecimals(value: Float): String {
     return (value * 100f).roundToInt()
         .let { scaled -> "${scaled / 100}.${(scaled % 100).toString().padStart(2, '0')}" }
@@ -2799,31 +4072,65 @@ private fun spectrumPitchClassLevels(
 }
 
 private fun cleanedSongChroma(
+    subBassLevels: FloatArray,
     bassLevels: FloatArray,
+    lowMidLevels: FloatArray,
     midLevels: FloatArray,
+    highLevels: FloatArray,
     fullLevels: FloatArray,
 ): FloatArray {
+    val subBass = compressedBandChroma(subBassLevels, power = 0.52f)
     val bass = compressedBandChroma(bassLevels, power = 0.55f)
-    val mid = compressedBandChroma(midLevels, power = 0.62f)
+    val lowMid = compressedBandChroma(lowMidLevels, power = 0.58f)
+    val mid = compressedBandChroma(midLevels, power = 0.64f)
+    val high = compressedBandChroma(highLevels, power = 0.48f)
     val full = compressedBandChroma(fullLevels, power = 0.48f)
     val cleaned = FloatArray(TunerAnalyzerNoteClasses.size)
-    val bassPeakIndex = bass.indices.maxByOrNull { bass[it] }
-    val bassPeak = bassPeakIndex?.let { bass[it] } ?: 0f
+    val rootBand = FloatArray(TunerAnalyzerNoteClasses.size) { index ->
+        subBass[index] * 0.58f + bass[index] * 0.42f
+    }
+    val bassPeakIndex = rootBand.indices.maxByOrNull { rootBand[it] }
+    val bassPeak = bassPeakIndex?.let { rootBand[it] } ?: 0f
     val bassRootIsClear = bassPeak >= 0.22f &&
-        bass.indices
+        rootBand.indices
             .filter { it != bassPeakIndex }
-            .maxOfOrNull { bass[it] }
+            .maxOfOrNull { rootBand[it] }
             ?.let { runnerUp -> bassPeak >= runnerUp * 1.06f }
             ?: true
 
     for (index in cleaned.indices) {
         val bassWeight = if (bassRootIsClear && index == bassPeakIndex) 0.62f else 0.42f
-        val combined = bass[index] * bassWeight + mid[index] * 0.43f + full[index] * 0.15f
-        val localSupport = maxOf(bass[index], mid[index])
-        val highOnlyPenalty = if (localSupport < 0.12f && full[index] > 0.28f) full[index] * 0.16f else 0f
+        val combined = rootBand[index] * bassWeight +
+            lowMid[index] * 0.32f +
+            mid[index] * 0.34f +
+            high[index] * 0.06f +
+            full[index] * 0.1f
+        val localSupport = maxOf(rootBand[index], lowMid[index], mid[index])
+        val highOnlyPenalty = if (localSupport < 0.14f && high[index] > 0.24f) high[index] * 0.22f else 0f
+        val fullOnlyPenalty = if (localSupport < 0.1f && full[index] > 0.28f) full[index] * 0.12f else 0f
+        val harmonicGhostPenalty = if (
+            bassRootIsClear &&
+            bassPeakIndex != null &&
+            index != bassPeakIndex &&
+            localSupport < 0.22f &&
+            isLikelyBassHarmonicGhost(bassPeakIndex, index)
+        ) {
+            (high[index] * 0.18f + full[index] * 0.12f).coerceAtMost(combined * 0.62f)
+        } else {
+            0f
+        }
         cleaned[index] = (combined - highOnlyPenalty).coerceAtLeast(0f)
+            .let { value -> (value - fullOnlyPenalty).coerceAtLeast(0f) }
+            .let { value -> (value - harmonicGhostPenalty).coerceAtLeast(0f) }
     }
     return cleaned
+}
+
+private fun isLikelyBassHarmonicGhost(
+    bassRootIndex: Int,
+    noteIndex: Int,
+): Boolean {
+    return (noteIndex - bassRootIndex).floorMod(TunerAnalyzerNoteClasses.size) in setOf(2, 4, 7, 8, 9, 10)
 }
 
 private fun compressedBandChroma(
@@ -2846,8 +4153,45 @@ private data class ChordRootEvidence(
     val confidence: Float,
 )
 
+private fun selectSongRootEvidence(
+    subBass: ChordRootEvidence?,
+    bass: ChordRootEvidence?,
+    pitch: ChordRootEvidence? = null,
+): ChordRootEvidence? {
+    if (pitch != null && bass != null && pitch.label == bass.label) {
+        return pitch.copy(confidence = (pitch.confidence * 0.7f + bass.confidence * 0.5f).coerceIn(0f, 1f))
+    }
+    if (pitch != null && bass != null && pitch.label != bass.label) {
+        return if (bass.confidence >= 0.62f) {
+            bass.copy(confidence = (bass.confidence * 0.82f).coerceIn(0.42f, 0.72f))
+        } else {
+            pitch
+        }
+    }
+    if (pitch != null && bass == null) {
+        return pitch
+    }
+    if (subBass != null && bass != null && subBass.label == bass.label) {
+        val agreedConfidence = subBass.confidence * 0.72f + bass.confidence * 0.48f
+        return subBass.copy(confidence = agreedConfidence.coerceIn(0f, 1f))
+    }
+    if (subBass != null && bass != null && subBass.label != bass.label) {
+        return if (bass.confidence >= 0.3f) {
+            bass.copy(confidence = (bass.confidence * 0.9f).coerceIn(0.28f, 0.62f))
+        } else {
+            null
+        }
+    }
+    if (subBass != null) return null
+    if (bass != null && bass.confidence >= 0.3f) {
+        return bass.copy(confidence = (bass.confidence * 0.96f).coerceIn(0f, 0.72f))
+    }
+    return null
+}
+
 private fun dominantChromaRootEvidence(
     classLevels: FloatArray,
+    octaveCounts: IntArray? = null,
     minPeak: Float = 0.0008f,
     dominanceRatio: Float = 1.08f,
 ): ChordRootEvidence? {
@@ -2865,26 +4209,50 @@ private fun dominantChromaRootEvidence(
         ((peak / runnerUp) - 1f) / 0.55f
     }
     val energyConfidence = (peak / (minPeak * 10f)).coerceIn(0f, 1f)
+    val octaveCount = octaveCounts?.getOrNull(peakIndex) ?: 0
+    val octaveConfidence = if (octaveCounts == null) {
+        1f
+    } else {
+        (octaveCount / 3f).coerceIn(0.35f, 1f)
+    }
+    if (octaveCounts != null && octaveCount <= 1 && peak < minPeak * 24f) return null
     return ChordRootEvidence(
         label = TunerAnalyzerNoteClasses[peakIndex],
-        confidence = (ratioConfidence * 0.72f + energyConfidence * 0.28f).coerceIn(0.12f, 1f),
+        confidence = ((ratioConfidence * 0.68f + energyConfidence * 0.22f) * octaveConfidence + octaveConfidence * 0.16f)
+            .coerceIn(0.12f, 1f),
     )
 }
 
-private fun dominantChromaRootClass(
-    classLevels: FloatArray,
-    minPeak: Float = 0.0008f,
-    dominanceRatio: Float = 1.08f,
-): String? {
-    val peakIndex = classLevels.indices.maxByOrNull { classLevels[it] } ?: return null
-    val peak = classLevels[peakIndex]
-    if (peak < minPeak) return null
-    val runnerUp = classLevels.indices
-        .filter { it != peakIndex }
-        .maxOfOrNull { classLevels[it] }
-        ?: 0f
-    if (runnerUp > 0f && peak < runnerUp * dominanceRatio) return null
-    return TunerAnalyzerNoteClasses[peakIndex]
+private fun spectrumPitchClassOctaveCounts(
+    fftFrame: FftFrame,
+    a4ReferenceHz: Int,
+    minHz: Float,
+    maxHz: Float,
+): IntArray {
+    val octaveMasks = IntArray(TunerAnalyzerNoteClasses.size)
+    val startBin = (minHz / fftFrame.binHz).roundToInt().coerceIn(1, fftFrame.magnitudes.lastIndex)
+    val endBin = (maxHz / fftFrame.binHz).roundToInt().coerceIn(startBin, fftFrame.magnitudes.lastIndex)
+    if (endBin <= startBin) return IntArray(TunerAnalyzerNoteClasses.size)
+    var peakMagnitude = 0f
+    for (bin in startBin..endBin) {
+        val magnitude = fftFrame.magnitudes[bin]
+        if (magnitude > peakMagnitude) peakMagnitude = magnitude
+    }
+    if (peakMagnitude <= 0f) return IntArray(TunerAnalyzerNoteClasses.size)
+    val threshold = peakMagnitude * 0.18f
+    for (bin in startBin..endBin) {
+        val magnitude = fftFrame.magnitudes[bin]
+        if (magnitude < threshold) continue
+        val frequency = bin * fftFrame.binHz
+        if (frequency !in minHz..maxHz) continue
+        val noteClass = frequency.toNoteReading(a4ReferenceHz).first.toNoteClass()
+        val noteIndex = noteClass?.noteClassIndex() ?: continue
+        val octave = log2((frequency / 16.35f).coerceAtLeast(1f)).roundToInt().coerceIn(0, 30)
+        octaveMasks[noteIndex] = octaveMasks[noteIndex] or (1 shl octave)
+    }
+    return IntArray(TunerAnalyzerNoteClasses.size) { index ->
+        Integer.bitCount(octaveMasks[index])
+    }
 }
 
 private fun dominantSpectrumNoteClasses(
@@ -3094,8 +4462,4 @@ private fun String?.keyRoot(): String? {
         key.getOrNull(1)?.takeIf { it == '#' }?.let { append(it) }
     }
     return root.takeIf { it.isNotEmpty() }
-}
-
-private fun Float.debugLevel(): String {
-    return ((this * 10_000f).roundToInt() / 10_000f).toString()
 }

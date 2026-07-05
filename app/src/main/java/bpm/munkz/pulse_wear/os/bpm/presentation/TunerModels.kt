@@ -1,6 +1,7 @@
 package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import androidx.compose.ui.graphics.Color
+import kotlin.math.roundToInt
 
 const val SPECTRUM_BAR_COUNT = 28
 const val DEFAULT_A4_REFERENCE_HZ = 440
@@ -31,14 +32,79 @@ data class AudioAnalysisState(
     val likelyChords: List<String> = emptyList(),
     val chordConfidence: Float = 0f,
     val alternateChord: String? = null,
+    val chordCandidates: List<String> = emptyList(),
+    val keyCandidates: List<String> = emptyList(),
     val chordTones: List<String> = emptyList(),
     val chordProgression: List<String> = emptyList(),
     val phraseLengthBars: Int? = null,
     val phraseConfidence: Float = 0f,
+    val phraseBarIndex: Int = 0,
+    val phraseLocked: Boolean = false,
+    val phraseSource: String = "",
+    val downbeatGuess: Int = 0,
+    val downbeatConfidence: Float = 0f,
+    val downbeatRoot: String? = null,
+    val downbeatLandingStrength: Float = 0f,
+    val harmonySummary: String = "",
+    val songDebugLine: String = "",
     val sensedA4Hz: Float? = null,
     val sensedA4OffsetCents: Int = 0,
     val spectrum: List<Float> = List(SPECTRUM_BAR_COUNT) { 0f },
 )
+
+data class SongPhraseState(
+    val source: String = "",
+    val lengthBars: Int? = null,
+    val confidence: Float = 0f,
+    val currentBarIndex: Int = 0,
+    val locked: Boolean = false,
+    val progressionSize: Int = 0,
+    val slotsPerBar: Int = 1,
+    val downbeatGuess: Int = 0,
+    val downbeatConfidence: Float = 0f,
+    val downbeatRoot: String? = null,
+    val downbeatLandingStrength: Float = 0f,
+) {
+    val isLearning: Boolean
+        get() = !locked
+
+    fun compactLabel(): String {
+        val sourceLabel = when {
+            locked -> "Lock"
+            source.isNotBlank() -> source
+            else -> "Learn"
+        }
+        return lengthBars?.let { bars ->
+            val slot = currentBarIndex.takeIf { it > 0 }?.let { index -> " $index/$bars" } ?: ""
+            "$sourceLabel ${bars}b$slot ${(confidence * 100f).roundToInt()}%"
+        } ?: run {
+            val count = progressionSize.takeIf { it > 0 } ?: currentBarIndex
+            val slot = count.takeIf { it > 0 }?.let { value -> " $value" } ?: ""
+            "$sourceLabel$slot"
+        }
+    }
+
+    fun downbeatLabel(): String {
+        if (downbeatGuess <= 0 || downbeatConfidence <= 0f) return "1 --"
+        val root = downbeatRoot?.let { " $it" } ?: ""
+        return "1->$downbeatGuess$root ${(downbeatConfidence * 100f).roundToInt()}%"
+    }
+}
+
+fun AudioAnalysisState.songPhraseState(): SongPhraseState {
+    return SongPhraseState(
+        source = phraseSource,
+        lengthBars = phraseLengthBars,
+        confidence = phraseConfidence,
+        currentBarIndex = phraseBarIndex,
+        locked = phraseLocked,
+        progressionSize = chordProgression.size,
+        downbeatGuess = downbeatGuess,
+        downbeatConfidence = downbeatConfidence,
+        downbeatRoot = downbeatRoot,
+        downbeatLandingStrength = downbeatLandingStrength,
+    )
+}
 
 data class SpectrumPeak(
     val frequencyHz: Float,
