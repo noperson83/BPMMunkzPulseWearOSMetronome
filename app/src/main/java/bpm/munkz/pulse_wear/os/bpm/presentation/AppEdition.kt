@@ -8,6 +8,8 @@ internal enum class AppEdition {
     Rhythm,
     Playlist,
     Pro,
+    HearNoEvil,
+    FidgetToy,
 }
 
 internal data class AppFeatureSet(
@@ -22,19 +24,28 @@ internal data class AppFeatureSet(
     val isTuneOnly: Boolean = edition == AppEdition.Tune
     val isRhythmOnly: Boolean = edition == AppEdition.Rhythm
     val isPlaylistOnly: Boolean = edition == AppEdition.Playlist
+    val isHearNoEvilOnly: Boolean = edition == AppEdition.HearNoEvil
+    val isFidgetToyOnly: Boolean = edition == AppEdition.FidgetToy
 }
 
 internal object AppEditionConfig {
     private fun editionFor(packageName: String): AppEdition {
         return when {
-            packageName.endsWith(".tune") -> AppEdition.Tune
-            packageName.endsWith(".rhythm") -> AppEdition.Rhythm
-            packageName.endsWith(".playlist") -> AppEdition.Playlist
-            packageName.endsWith(".pro") -> AppEdition.Pro
+            BuildConfig.APP_EDITION == "bpm" -> AppEdition.Bpm
             BuildConfig.APP_EDITION == "tune" -> AppEdition.Tune
             BuildConfig.APP_EDITION == "rhythm" -> AppEdition.Rhythm
             BuildConfig.APP_EDITION == "playlist" -> AppEdition.Playlist
             BuildConfig.APP_EDITION == "pro" -> AppEdition.Pro
+            BuildConfig.APP_EDITION == "hearnoevil" -> AppEdition.HearNoEvil
+            BuildConfig.APP_EDITION == "fidgettoy" -> AppEdition.FidgetToy
+            packageName.endsWith(".metronome") -> AppEdition.Bpm
+            packageName.endsWith(".tune") ||
+                packageName.endsWith(".tuner") -> AppEdition.Tune
+            packageName.endsWith(".rhythm") -> AppEdition.Rhythm
+            packageName.endsWith(".playlist") -> AppEdition.Playlist
+            packageName.endsWith(".pro") -> AppEdition.Pro
+            packageName.endsWith(".hearnoevil") -> AppEdition.HearNoEvil
+            packageName.endsWith(".fidgettoy") -> AppEdition.FidgetToy
             else -> AppEdition.Bpm
         }
     }
@@ -49,9 +60,11 @@ internal object AppEditionConfig {
             AppEdition.Rhythm -> RHYTHM_PAGE_COUNT
             AppEdition.Playlist -> PLAYLIST_PAGE_COUNT
             AppEdition.Pro -> PULSE_PAGE_COUNT
+            AppEdition.HearNoEvil -> 1
+            AppEdition.FidgetToy -> 1
             },
-            showTunerEntry = edition == AppEdition.Pro || edition == AppEdition.Tune,
-            showSpectrumEntry = edition == AppEdition.Pro || edition == AppEdition.Tune,
+            showTunerEntry = edition == AppEdition.Pro || edition == AppEdition.Tune || edition == AppEdition.HearNoEvil,
+            showSpectrumEntry = edition == AppEdition.Pro || edition == AppEdition.Tune || edition == AppEdition.HearNoEvil,
             showTapRhythmChoices = edition == AppEdition.Pro || edition == AppEdition.Rhythm,
         )
     }

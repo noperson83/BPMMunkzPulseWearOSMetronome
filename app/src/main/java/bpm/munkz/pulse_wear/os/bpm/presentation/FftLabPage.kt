@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +37,7 @@ import kotlin.math.roundToInt
 @Composable
 fun FftLabPage(
     appText: AppText,
+    title: String = "FFT Lab",
     audioAnalysisState: AudioAnalysisState,
     selectedProfile: TunerListenProfile,
     selectedReaderMode: SpectrumReaderMode,
@@ -52,13 +52,14 @@ fun FftLabPage(
         contentAlignment = Alignment.Center,
     ) {
         val watchSClass = minOf(maxWidth, maxHeight) <= 200.dp
-        val titleFont = if (watchSClass) 14.sp else 16.sp
+        val titleFont = if (watchSClass) 12.sp else 14.sp
         val labelFont = if (watchSClass) 6.sp else 7.sp
         val valueFont = if (watchSClass) 9.sp else 10.sp
-        val graphHeight = if (watchSClass) 54.dp else 62.dp
+        val graphHeight = if (watchSClass) 48.dp else 56.dp
         val range = selectedProfile.audioListenRangeFor(selectedReaderMode)
         val liveChord = audioAnalysisState.likelyChords.firstOrNull()
         val progressionChords = audioAnalysisState.chordProgression.take(16)
+        val phraseState = audioAnalysisState.songPhraseState()
         val meterText = audioAnalysisState.tempoMeterLabel.ifBlank { "${audioAnalysisState.tempoMeter}/4" }
         val musicalTempoText = audioAnalysisState.musicalTempoBpm?.toString() ?: "--"
         val feelText = audioAnalysisState.tempoFeelLabel.ifBlank { "Raw" }
@@ -69,9 +70,7 @@ fun FftLabPage(
                 key
             }
         } ?: "--"
-        val phraseText = audioAnalysisState.phraseLengthBars?.let { bars ->
-            "${bars}b ${(audioAnalysisState.phraseConfidence * 100f).roundToInt()}%"
-        } ?: "Learn"
+        val phraseText = phraseState.compactLabel()
         val sensedA4Text = audioAnalysisState.sensedA4Hz?.let { sensedA4Hz ->
             val direction = when {
                 audioAnalysisState.sensedA4OffsetCents > 0 -> "+"
@@ -83,13 +82,12 @@ fun FftLabPage(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .offset(y = if (watchSClass) (-10).dp else (-14).dp)
-                .padding(top = if (watchSClass) 4.dp else 6.dp),
+                .padding(top = if (watchSClass) 12.dp else 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                text = "FFT Lab",
+                text = title,
                 fontSize = titleFont,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -133,8 +131,10 @@ fun FftLabPage(
                         modifier = Modifier.fillMaxSize(),
                     )
                     PhraseChordOverlay(
-                        chords = progressionChords.ifEmpty { listOfNotNull(liveChord) },
+                        chords = progressionChords,
                         keyName = audioAnalysisState.guessedKey,
+                        phraseBarIndex = phraseState.currentBarIndex,
+                        phraseLocked = phraseState.locked,
                         modifier = Modifier.fillMaxSize(),
                         labelFont = labelFont,
                     )
@@ -242,6 +242,8 @@ fun FftLabPage(
 private fun PhraseChordOverlay(
     chords: List<String>,
     keyName: String?,
+    phraseBarIndex: Int,
+    phraseLocked: Boolean,
     modifier: Modifier = Modifier,
     labelFont: TextUnit,
 ) {
@@ -268,11 +270,15 @@ private fun PhraseChordOverlay(
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 rowChords.forEachIndexed { index, chord ->
+                    val absoluteIndex = rowIndex * 4 + index + 1
+                    val isActive = phraseBarIndex == absoluteIndex
                     val isFirst = rowIndex == 0 && index == 0
                     PhraseChordCell(
                         chord = chord,
                         keyName = keyName,
                         isFirst = isFirst,
+                        isActive = isActive,
+                        phraseLocked = phraseLocked,
                         labelFont = labelFont,
                         modifier = Modifier.weight(1f),
                     )
@@ -287,6 +293,8 @@ private fun PhraseChordCell(
     chord: String,
     keyName: String?,
     isFirst: Boolean,
+    isActive: Boolean,
+    phraseLocked: Boolean,
     labelFont: TextUnit,
     modifier: Modifier = Modifier,
 ) {
@@ -299,8 +307,16 @@ private fun PhraseChordCell(
             .clip(shape)
             .background(color.copy(alpha = if (uncertain) 0.12f else 0.22f), shape)
             .border(
-                width = if (isFirst) 1.5.dp else 0.8.dp,
-                color = if (isFirst) MaterialTheme.colorScheme.primary.copy(alpha = 0.9f) else color.copy(alpha = 0.42f),
+                width = when {
+                    isActive -> 1.7.dp
+                    isFirst -> 1.3.dp
+                    else -> 0.8.dp
+                },
+                color = when {
+                    isActive -> MaterialTheme.colorScheme.primary.copy(alpha = if (phraseLocked) 0.95f else 0.72f)
+                    isFirst -> MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
+                    else -> color.copy(alpha = 0.42f)
+                },
                 shape = shape,
             )
             .padding(horizontal = 2.dp),

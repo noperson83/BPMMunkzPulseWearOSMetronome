@@ -18,3 +18,7 @@
 local.properties
 bpmmunkz-current.png
 clock_choice_contact.png
+keystore.properties
+*.jks
+*.keystore
+*.p12

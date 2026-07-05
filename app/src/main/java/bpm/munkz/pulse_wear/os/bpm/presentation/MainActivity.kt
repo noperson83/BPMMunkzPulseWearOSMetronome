@@ -8,13 +8,15 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
-import android.util.Log
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -58,6 +60,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -76,6 +79,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.ui.tooling.preview.WearPreviewDevices
 import androidx.wear.compose.ui.tooling.preview.WearPreviewFontScales
+import bpm.munkz.pulse_wear.os.bpm.BuildConfig
 import bpm.munkz.pulse_wear.os.bpm.R
 import bpm.munkz.pulse_wear.os.bpm.presentation.theme.BPMMunkzPulseTheme
 import kotlinx.coroutines.delay
@@ -107,6 +111,8 @@ private const val TUNE_TUNER_PAGE_INDEX = 0
 private const val TUNE_SPECTRUM_PAGE_INDEX = 1
 private const val TUNE_KEY_PAGE_INDEX = 2
 private const val TUNE_SETTINGS_PAGE_INDEX = 3
+private val INTERNAL_FFT_LAB_ENABLED: Boolean
+    get() = BuildConfig.DEBUG
 internal const val ACTION_OPEN_SPECTRUM = "bpm.munkz.pulse_wear.os.bpm.action.OPEN_SPECTRUM"
 internal const val EXTRA_OPEN_SPECTRUM = "bpm.munkz.pulse_wear.os.bpm.extra.OPEN_SPECTRUM"
 private const val PAGER_TOUCH_VISUAL_QUIET_MS = 900L
@@ -126,64 +132,31 @@ private const val FREE_SETTINGS_TRIAL_DURATION_DAYS = 30
 private const val FREE_SETTINGS_TRIAL_COOLDOWN_DAYS = 30
 private const val FREE_SETTINGS_TRIAL_RESET_DAYS =
     FREE_SETTINGS_TRIAL_DURATION_DAYS + FREE_SETTINGS_TRIAL_COOLDOWN_DAYS
+private const val SETTINGS_UNLOCK_PURCHASED_KEY = "settings_unlock_purchased"
+private const val METRONOME_SETTINGS_UNLOCK_PRODUCT_ID = "metronome_settings_unlock"
+private const val TUNER_FULL_UNLOCK_PRODUCT_ID = "tuner_full_unlock"
+private const val RHYTHM_FULL_UNLOCK_PRODUCT_ID = "rhythm_full_unlock"
+private const val SETLIST_FULL_UNLOCK_PRODUCT_ID = "setlist_full_unlock"
+private const val PRO_FULL_UNLOCK_PRODUCT_ID = "pro_full_unlock"
+private const val PULSE_PRO_PACKAGE_NAME = "bpm.munkz.pulse_wear.os.pro"
+private const val PLAY_STORE_PACKAGE_NAME = "com.android.vending"
 internal const val DEFAULT_TEMPO_NUDGE_MS = 200
 internal const val MIN_TEMPO_NUDGE_MS = 50
 internal const val MAX_TEMPO_NUDGE_MS = 250
 internal const val TEMPO_NUDGE_STEP_MS = 50
 
 internal object BeatTimingTrace {
-    private const val TAG = "BPM_TIMING"
-
-    private data class TimingEvent(
-        val label: String,
-        val deltaMs: Long,
-    )
-
-    private var beatId = 0L
-    private var currentBeat = 0
-    private var beatStartedAtMs = 0L
-    private var events = mutableListOf<TimingEvent>()
-
-    @Synchronized
     fun startBeat(
         beat: Int,
         bpm: Int,
         accentType: BeatAccentType,
-    ) {
-        beatId += 1L
-        currentBeat = beat
-        beatStartedAtMs = SystemClock.elapsedRealtime()
-        events = mutableListOf(
-            TimingEvent("beat tick b$beat ${accentType.name} @${bpm}bpm", 0L),
-        )
-        Log.d(TAG, "beat#$beatId high->low: ${formatEvents()}")
-    }
+    ) = Unit
 
-    @Synchronized
     fun markForBeat(label: String, beat: Int) {
-        if (currentBeat != beat) return
         mark(label)
     }
 
-    @Synchronized
-    fun mark(label: String) {
-        if (beatStartedAtMs <= 0L) return
-        if (events.any { it.label == label }) return
-
-        events += TimingEvent(
-            label = label,
-            deltaMs = SystemClock.elapsedRealtime() - beatStartedAtMs,
-        )
-        Log.d(TAG, "beat#$beatId high->low: ${formatEvents()}")
-    }
-
-    private fun formatEvents(): String {
-        return events
-            .sortedByDescending { it.deltaMs }
-            .joinToString(separator = " | ") { event ->
-                "${event.label}=+${event.deltaMs}ms"
-            }
-    }
+    fun mark(label: String) = Unit
 }
 internal const val NEON_GREEN_COLOR = -6422784
 private const val DEFAULT_MAIN_COLOR = NEON_GREEN_COLOR
@@ -374,7 +347,7 @@ private fun appTextFor(language: AppLanguage): AppText {
             edit = "Edit",
             editRhythm = "Edit Rhythm",
             deleteSong = "Del",
-            editPlaylist = "Edit Playlist",
+            editPlaylist = "Edit Setlist",
             newList = "New List",
             song = "Song",
             addSong = "Add Song",
@@ -543,11 +516,15 @@ private fun AppLaunchSplashScreen(logoResId: Int) {
 
 private fun launchLogoResIdForPackage(packageName: String): Int {
     return when {
-        packageName.endsWith(".bpm") ||
-            packageName.endsWith(".tune") ||
-            packageName.endsWith(".rhythm") ||
-            packageName.endsWith(".playlist") ||
-            packageName.endsWith(".pro") -> R.drawable.bpm_munkz_app_logo_free
+        packageName.endsWith(".metronome") ||
+            packageName.endsWith(".bpm") -> R.drawable.bpm_munkz_app_logo_metronome
+        packageName.endsWith(".tune") ||
+            packageName.endsWith(".tuner") -> R.drawable.bpm_munkz_app_logo_tuner
+        packageName.endsWith(".rhythm") -> R.drawable.bpm_munkz_app_logo_rhythm
+        packageName.endsWith(".playlist") -> R.drawable.bpm_munkz_app_logo_playlist
+        packageName.endsWith(".pro") -> R.drawable.bpm_munkz_app_logo_pro
+        packageName.endsWith(".hearnoevil") -> R.drawable.hear_no_evil_logo
+        packageName.endsWith(".fidgettoy") -> R.drawable.munkz_fidget_toy_logo
         else -> R.drawable.bpm_munkz_app_logo_edition
     }
 }
@@ -727,11 +704,76 @@ fun BeatPulseScreen(
             if (isPreview) 0L else context.loadSettingsLong(FREE_SETTINGS_TRIAL_STARTED_DAY_KEY, 0L),
         )
     }
+    var settingsUnlockPurchased by rememberSaveable {
+        mutableStateOf(
+            !isPreview && context.loadSettingsBoolean(SETTINGS_UNLOCK_PURCHASED_KEY, false),
+        )
+    }
     val freeSettingsTrialState = freeSettingsTrialState(
         trialStartedDay = freeSettingsTrialStartedDay,
         todayEpochDay = todayEpochDay,
     )
-    val appCpuUsagePercent = rememberAppCpuUsagePercent(enabled = !isPreview)
+    val purchaseUnlockProductId = when {
+        appFeatures.isFreeOnly -> METRONOME_SETTINGS_UNLOCK_PRODUCT_ID
+        appFeatures.isTuneOnly -> TUNER_FULL_UNLOCK_PRODUCT_ID
+        appFeatures.isRhythmOnly -> RHYTHM_FULL_UNLOCK_PRODUCT_ID
+        appFeatures.isPlaylistOnly -> SETLIST_FULL_UNLOCK_PRODUCT_ID
+        appFeatures.edition == AppEdition.Pro -> PRO_FULL_UNLOCK_PRODUCT_ID
+        else -> null
+    }
+    val playBillingAvailable = remember(context.packageName, isPreview) {
+        !isPreview && context.isInstalledFromPlay()
+    }
+    val proUnlockedByPurchaseOrTrial = proFeatureControlsEnabled(
+        isProFree = appFeatures.isProFree,
+        trialSettingsEnabled = freeSettingsTrialState.settingsEnabled,
+        purchaseUnlocked = settingsUnlockPurchased,
+    )
+    val fftLabEnabled = INTERNAL_FFT_LAB_ENABLED && appFeatures.edition == AppEdition.Pro
+    val billingUnlockCoordinator = remember(context.packageName, isPreview, playBillingAvailable, purchaseUnlockProductId) {
+        val productId = purchaseUnlockProductId
+        if (!playBillingAvailable || productId == null) {
+            null
+        } else {
+            BillingUnlockCoordinator(
+                context = context,
+                productIds = setOf(productId),
+                onProductOwned = { ownedProductId ->
+                    if (ownedProductId == productId) {
+                        settingsUnlockPurchased = true
+                        context.saveSettingsBoolean(SETTINGS_UNLOCK_PURCHASED_KEY, true)
+                    }
+                },
+            )
+        }
+    }
+    DisposableEffect(billingUnlockCoordinator) {
+        billingUnlockCoordinator?.start()
+        onDispose {
+            billingUnlockCoordinator?.stop()
+        }
+    }
+    val buyStatusText = when {
+        settingsUnlockPurchased -> "Unlocked"
+        purchaseUnlockProductId != null && !playBillingAvailable -> "Install from Play to buy"
+        else -> billingUnlockCoordinator?.statusText ?: "Play purchase unavailable"
+    }
+    val showPurchaseControls = purchaseUnlockProductId != null && !settingsUnlockPurchased
+    val buyThisAppEnabled = purchaseUnlockProductId != null &&
+        !settingsUnlockPurchased &&
+        billingUnlockCoordinator != null
+    val settingsPageVisible = when {
+        appFeatures.isFreeOnly || appFeatures.isPlaylistOnly -> {
+            pagerState.currentPage == FREE_SETTINGS_PAGE_INDEX
+        }
+        appFeatures.edition == AppEdition.Pro -> pagerState.currentPage == SETTINGS_PAGE_INDEX
+        else -> false
+    }
+    val appCpuUsagePercent = rememberAppCpuUsagePercent(
+        enabled = BuildConfig.DEBUG &&
+            settingsPageVisible &&
+            !isPreview,
+    )
     var micPermissionGranted by remember(context, isPreview) {
         mutableStateOf(
             isPreview ||
@@ -746,8 +788,35 @@ fun BeatPulseScreen(
     ) { granted ->
         micPermissionGranted = granted
     }
+    var notificationPermissionGranted by remember(context, isPreview) {
+        mutableStateOf(
+            isPreview ||
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) == PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        notificationPermissionGranted = granted
+    }
+    val shouldRequestNotificationPermission = !appFeatures.isFidgetToyOnly && !appFeatures.isHearNoEvilOnly
+    LaunchedEffect(shouldRequestNotificationPermission, notificationPermissionGranted, isPreview) {
+        if (
+            !isPreview &&
+            shouldRequestNotificationPermission &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !notificationPermissionGranted
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     val audioOverlayOpen = tunerOverlayOpen || spectrumOverlayOpen || keyOverlayOpen || bpmReaderOverlayOpen || fftOverlayOpen
     val tuneAudioOpen = appFeatures.isTuneOnly && tunePageIndex != TUNE_SETTINGS_PAGE_INDEX
+    val hearNoEvilAudioOpen = appFeatures.isHearNoEvilOnly
 
     LaunchedEffect(openSpectrumRequest) {
         if (openSpectrumRequest) {
@@ -771,17 +840,18 @@ fun BeatPulseScreen(
     val activeAudioReaderMode = when {
         tunerOverlayOpen -> SpectrumReaderMode.Instrument
         keyOverlayOpen || fftOverlayOpen -> SpectrumReaderMode.Song
-        appFeatures.isTuneOnly && tunePageIndex == TUNE_TUNER_PAGE_INDEX -> SpectrumReaderMode.Instrument
+        appFeatures.isHearNoEvilOnly -> SpectrumReaderMode.Song
+        appFeatures.isTuneOnly && tunePageIndex == TUNE_TUNER_PAGE_INDEX -> SpectrumReaderMode.Song
         appFeatures.isTuneOnly && tunePageIndex == TUNE_KEY_PAGE_INDEX -> SpectrumReaderMode.Song
         else -> spectrumReaderMode
     }
     val audioAnalysisState = rememberAudioAnalysisState(
-        enabled = micPermissionGranted && (audioOverlayOpen || tuneAudioOpen) && !isPreview && !appFeatures.isFreeOnly,
+        enabled = micPermissionGranted && (audioOverlayOpen || tuneAudioOpen || hearNoEvilAudioOpen) && !isPreview && !appFeatures.isFreeOnly,
         listenProfile = tunerListenProfile,
         readerMode = activeAudioReaderMode,
         tuningChoice = spectrumTuningChoice,
         a4ReferenceHz = a4ReferenceHz,
-        includeSpectrum = spectrumOverlayOpen || fftOverlayOpen ||
+        includeSpectrum = appFeatures.isHearNoEvilOnly || spectrumOverlayOpen || fftOverlayOpen ||
             appFeatures.isTuneOnly &&
             (tunePageIndex == TUNE_TUNER_PAGE_INDEX || tunePageIndex == TUNE_SPECTRUM_PAGE_INDEX),
     )
@@ -1257,6 +1327,7 @@ fun BeatPulseScreen(
         playlists = nextPlaylists
         if (!isPreview) {
             context.saveSavedPlaylists(nextPlaylists)
+            context.saveLatestMusicReading(rhythmState.bpm, currentSong.musicalKey)
         }
     }
 
@@ -1268,6 +1339,7 @@ fun BeatPulseScreen(
         playlists = nextPlaylists
         if (!isPreview) {
             context.saveSavedPlaylists(nextPlaylists)
+            context.saveLatestMusicReading(currentBpm, currentSong.musicalKey)
         }
     }
 
@@ -1280,12 +1352,14 @@ fun BeatPulseScreen(
         playlists = nextPlaylists
         if (!isPreview) {
             context.saveSavedPlaylists(nextPlaylists)
+            context.saveLatestMusicReading(nextBpm, currentSong.musicalKey)
         }
     }
 
     fun savePlaylistEditorAndClose() {
         if (!isPreview) {
             context.saveSavedPlaylists(playlists)
+            context.saveLatestMusicReading(currentSong.bpm, currentSong.musicalKey)
         }
         playlistRhythmEditorPopupOpen = false
         playlistEditorPopupOpen = false
@@ -1416,14 +1490,18 @@ fun BeatPulseScreen(
         }
     }
 
-    LaunchedEffect(isRunning, keepScreenMode, activity, isPreview) {
+    LaunchedEffect(isRunning, keepScreenMode, activity, appFeatures.isHearNoEvilOnly, isPreview) {
         if (isPreview) return@LaunchedEffect
 
         val keepScreenOnFlag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        val shouldKeepScreenOn = when (keepScreenMode) {
-            KeepScreenMode.AppOpen -> true
-            KeepScreenMode.Playing -> isRunning
-            KeepScreenMode.WatchTimeout -> false
+        val shouldKeepScreenOn = if (appFeatures.isHearNoEvilOnly) {
+            true
+        } else {
+            when (keepScreenMode) {
+                KeepScreenMode.AppOpen -> true
+                KeepScreenMode.Playing -> isRunning
+                KeepScreenMode.WatchTimeout -> false
+            }
         }
         if (shouldKeepScreenOn) {
             activity?.window?.addFlags(keepScreenOnFlag)
@@ -1444,7 +1522,8 @@ fun BeatPulseScreen(
             showBuyNowButton: Boolean,
             settingsEnabled: Boolean,
         ) {
-            val effectiveSettingsEnabled = settingsEnabled || freeSettingsTrialState.settingsEnabled
+            val effectiveSettingsEnabled =
+                settingsEnabled || freeSettingsTrialState.settingsEnabled || settingsUnlockPurchased
             SimpleSettingsPage(
                 appText = appText,
                 hapticsEnabled = hapticsEnabled,
@@ -1461,17 +1540,28 @@ fun BeatPulseScreen(
                 bigRingFlashMode = bigRingFlashMode,
                 appLanguage = appLanguage,
                 appCpuUsagePercent = appCpuUsagePercent,
-                showBuyNowButton = showBuyNowButton,
+                showBuyNowButton = showBuyNowButton && showPurchaseControls,
                 settingsEnabled = effectiveSettingsEnabled,
                 trialStatusText = freeSettingsTrialState.statusText,
                 trialButtonText = freeSettingsTrialState.buttonText,
                 trialButtonEnabled = freeSettingsTrialState.buttonEnabled,
+                buyStatusText = buyStatusText,
+                buyThisAppEnabled = buyThisAppEnabled,
+                pulseProEnabled = !appFeatures.isProFree,
                 onStartTrial = {
                     val startDay = currentEpochDay()
                     freeSettingsTrialStartedDay = startDay
                     if (!isPreview) {
                         context.saveSettingsLong(FREE_SETTINGS_TRIAL_STARTED_DAY_KEY, startDay)
                     }
+                },
+                onBuyThisApp = {
+                    purchaseUnlockProductId?.let { productId ->
+                        billingUnlockCoordinator?.buy(activity, productId)
+                    }
+                },
+                onOpenPulsePro = {
+                    context.openPulseProListing()
                 },
                 onHapticsToggle = {
                     val nextHapticsEnabled = !hapticsEnabled
@@ -1611,7 +1701,22 @@ fun BeatPulseScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            if (appFeatures.isTuneOnly) {
+            if (appFeatures.isFidgetToyOnly) {
+                FidgetToyPage()
+            } else if (appFeatures.isHearNoEvilOnly) {
+                FftLabPage(
+                    appText = appText,
+                    title = "Hear No Evil",
+                    audioAnalysisState = audioAnalysisState,
+                    selectedProfile = tunerListenProfile,
+                    selectedReaderMode = SpectrumReaderMode.Song,
+                    a4ReferenceHz = a4ReferenceHz,
+                    micPermissionGranted = micPermissionGranted,
+                    onRequestMicPermission = {
+                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    },
+                )
+            } else if (appFeatures.isTuneOnly) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     when (tunePageIndex) {
                         TUNE_TUNER_PAGE_INDEX -> TunerPage(
@@ -1658,9 +1763,12 @@ fun BeatPulseScreen(
                                 spectrumTuningChoice = tuningChoice?.takeIf { it.profile == profile }
                             },
                             onSaveToClock = { _, _ -> },
+                            showFftLabButton = fftLabEnabled,
                             onOpenFft = {
-                                spectrumReaderMode = SpectrumReaderMode.Song
-                                fftOverlayOpen = true
+                                if (fftLabEnabled) {
+                                    spectrumReaderMode = SpectrumReaderMode.Song
+                                    fftOverlayOpen = true
+                                }
                             },
                             onRequestMicPermission = {
                                 micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -1686,17 +1794,28 @@ fun BeatPulseScreen(
                             appLanguage = appLanguage,
                             appCpuUsagePercent = appCpuUsagePercent,
                             keepScreenMode = keepScreenMode,
-                            showBuyNowButton = true,
-                            settingsEnabled = freeSettingsTrialState.settingsEnabled,
+                            showBuyNowButton = showPurchaseControls,
+                            settingsEnabled = freeSettingsTrialState.settingsEnabled || settingsUnlockPurchased,
                             trialStatusText = freeSettingsTrialState.statusText,
                             trialButtonText = freeSettingsTrialState.buttonText,
                             trialButtonEnabled = freeSettingsTrialState.buttonEnabled,
+                            buyStatusText = buyStatusText,
+                            buyThisAppEnabled = buyThisAppEnabled,
+                            pulseProEnabled = true,
                             onStartTrial = {
                                 val startDay = currentEpochDay()
                                 freeSettingsTrialStartedDay = startDay
                                 if (!isPreview) {
                                     context.saveSettingsLong(FREE_SETTINGS_TRIAL_STARTED_DAY_KEY, startDay)
                                 }
+                            },
+                            onBuyThisApp = {
+                                purchaseUnlockProductId?.let { productId ->
+                                    billingUnlockCoordinator?.buy(activity, productId)
+                                }
+                            },
+                            onOpenPulsePro = {
+                                context.openPulseProListing()
                             },
                             onA4ReferenceHzChange = { referenceHz ->
                                 val nextReferenceHz = referenceHz.coerceIn(MIN_A4_REFERENCE_HZ, MAX_A4_REFERENCE_HZ)
@@ -1788,8 +1907,8 @@ fun BeatPulseScreen(
                         )
 
                         FREE_SETTINGS_PAGE_INDEX -> SimpleSettingsSurface(
-                            showBuyNowButton = true,
-                            settingsEnabled = false,
+                            showBuyNowButton = showPurchaseControls,
+                            settingsEnabled = settingsUnlockPurchased,
                         )
                     }
                     return@HorizontalPager
@@ -1830,8 +1949,8 @@ fun BeatPulseScreen(
                         )
 
                         RHYTHM_APP_SETTINGS_PAGE_INDEX -> SimpleSettingsSurface(
-                            showBuyNowButton = true,
-                            settingsEnabled = freeSettingsTrialState.settingsEnabled,
+                            showBuyNowButton = showPurchaseControls,
+                            settingsEnabled = freeSettingsTrialState.settingsEnabled || settingsUnlockPurchased,
                         )
                     }
                     return@HorizontalPager
@@ -1868,21 +1987,34 @@ fun BeatPulseScreen(
                             keepScreenMode = keepScreenMode,
                             mainColorArgb = mainColorArgb,
                             backgroundColorArgb = backgroundColorArgb,
+                            ringColorArgb = bigPulseRingColorArgb,
+                            bigRingFlashMode = bigRingFlashMode,
                             clockColorArgb = clockColorArgb,
                             clockImageIndex = selectedClockImageIndex,
                             appLanguage = appLanguage,
                             appCpuUsagePercent = appCpuUsagePercent,
-                            showBuyNowButton = true,
-                            settingsEnabled = freeSettingsTrialState.settingsEnabled,
+                            showBuyNowButton = showPurchaseControls,
+                            settingsEnabled = freeSettingsTrialState.settingsEnabled || settingsUnlockPurchased,
                             trialStatusText = freeSettingsTrialState.statusText,
                             trialButtonText = freeSettingsTrialState.buttonText,
                             trialButtonEnabled = freeSettingsTrialState.buttonEnabled,
+                            buyStatusText = buyStatusText,
+                            buyThisAppEnabled = buyThisAppEnabled,
+                            pulseProEnabled = false,
                             onStartTrial = {
                                 val startDay = currentEpochDay()
                                 freeSettingsTrialStartedDay = startDay
                                 if (!isPreview) {
                                     context.saveSettingsLong(FREE_SETTINGS_TRIAL_STARTED_DAY_KEY, startDay)
                                 }
+                            },
+                            onBuyThisApp = {
+                                purchaseUnlockProductId?.let { productId ->
+                                    billingUnlockCoordinator?.buy(activity, productId)
+                                }
+                            },
+                            onOpenPulsePro = {
+                                context.openPulseProListing()
                             },
                             onHapticsToggle = {
                                 val nextHapticsEnabled = !hapticsEnabled
@@ -1973,6 +2105,18 @@ fun BeatPulseScreen(
                                     context.saveSettingsInt(SETTINGS_BACKGROUND_COLOR_KEY, nextColorArgb)
                                 }
                             },
+                            onRingColorChoice = { colorArgb ->
+                                bigPulseRingColorArgb = colorArgb
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_RING_COLOR_KEY, colorArgb)
+                                }
+                            },
+                            onBigRingModeChoice = { mode ->
+                                bigRingModeState.intValue = mode.persistedValue
+                                if (!isPreview) {
+                                    context.saveSettingsInt(SETTINGS_RING_MODE_KEY, mode.persistedValue)
+                                }
+                            },
                             onClockColorChoice = { colorArgb ->
                                 clockColorArgb = colorArgb
                                 if (!isPreview) {
@@ -2008,7 +2152,7 @@ fun BeatPulseScreen(
                             playbackStartedAtMs = playbackStartedAtMs,
                             clockImageResId = clockImageResId,
                             clockColorArgb = clockColorArgb,
-                            editEnabled = !appFeatures.isProFree,
+                            editEnabled = proUnlockedByPurchaseOrTrial,
                             onPreviousSong = { selectSong(songIndex - 1) },
                             onNextSong = { selectSong(songIndex + 1) },
                             onEditPlaylist = {
@@ -2036,8 +2180,8 @@ fun BeatPulseScreen(
                         beatRingVisible = pageShowsRhythmPulse(pagerState.currentPage) &&
                             !pagerState.isScrollInProgress &&
                             abs(pagerState.currentPageOffsetFraction) <= 0.01f,
-                        audioToolsEnabled = !appFeatures.isProFree,
-                        editEnabled = !appFeatures.isProFree,
+                        audioToolsEnabled = proUnlockedByPurchaseOrTrial,
+                        editEnabled = proUnlockedByPurchaseOrTrial,
                         onEditRhythm = {
                             rhythmEditorPopupOpen = true
                         },
@@ -2078,18 +2222,29 @@ fun BeatPulseScreen(
                     bigRingFlashMode = bigRingFlashMode,
                     appLanguage = appLanguage,
                     appCpuUsagePercent = appCpuUsagePercent,
-                    showBuyNowButton = appFeatures.isProFree,
-                    settingsEnabled = !appFeatures.isProFree,
-                    showRhythmPresetSettings = !appFeatures.isProFree,
+                    showBuyNowButton = appFeatures.isProFree && showPurchaseControls,
+                    settingsEnabled = proUnlockedByPurchaseOrTrial,
+                    showRhythmPresetSettings = proUnlockedByPurchaseOrTrial,
                     trialStatusText = freeSettingsTrialState.statusText,
                     trialButtonText = freeSettingsTrialState.buttonText,
                     trialButtonEnabled = freeSettingsTrialState.buttonEnabled,
+                    buyStatusText = buyStatusText,
+                    buyThisAppEnabled = buyThisAppEnabled,
+                    pulseProEnabled = !appFeatures.isProFree,
                     onStartTrial = {
                         val startDay = currentEpochDay()
                         freeSettingsTrialStartedDay = startDay
                         if (!isPreview) {
                             context.saveSettingsLong(FREE_SETTINGS_TRIAL_STARTED_DAY_KEY, startDay)
                         }
+                    },
+                    onBuyThisApp = {
+                        purchaseUnlockProductId?.let { productId ->
+                            billingUnlockCoordinator?.buy(activity, productId)
+                        }
+                    },
+                    onOpenPulsePro = {
+                        context.openPulseProListing()
                     },
                     onHapticsToggle = {
                         val nextHapticsEnabled = !hapticsEnabled
@@ -2262,8 +2417,8 @@ fun BeatPulseScreen(
                         isRunning = isRunning,
                         showAudioTools = appFeatures.showTunerEntry || appFeatures.showSpectrumEntry,
                         showRhythmChoices = appFeatures.showTapRhythmChoices,
-                        audioToolsEnabled = !appFeatures.isProFree,
-                        keyEnabled = !appFeatures.isProFree,
+                        audioToolsEnabled = proUnlockedByPurchaseOrTrial,
+                        keyEnabled = proUnlockedByPurchaseOrTrial,
                         onOpenTuner = { tunerOverlayOpen = true },
                         onOpenSpectrum = { spectrumOverlayOpen = true },
                         onTapTempo = recordTapTempo,
@@ -2300,11 +2455,6 @@ fun BeatPulseScreen(
                         .padding(bottom = 8.dp),
                 )
             }
-
-            CpuPercentOverlay(
-                cpuUsagePercent = appCpuUsagePercent,
-                modifier = Modifier.align(Alignment.TopStart),
-            )
 
             if (playlistEditorPopupOpen) {
                 PlaylistEditorPopup(
@@ -2750,10 +2900,13 @@ fun BeatPulseScreen(
                                 spectrumOverlayOpen = false
                             }
                         },
+                        showFftLabButton = fftLabEnabled,
                         onOpenFft = {
-                            spectrumReaderMode = SpectrumReaderMode.Song
-                            spectrumOverlayOpen = false
-                            fftOverlayOpen = true
+                            if (fftLabEnabled) {
+                                spectrumReaderMode = SpectrumReaderMode.Song
+                                spectrumOverlayOpen = false
+                                fftOverlayOpen = true
+                            }
                         },
                         onRequestMicPermission = {
                             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -2784,7 +2937,7 @@ fun BeatPulseScreen(
                 }
             }
 
-            if (fftOverlayOpen) {
+            if (fftOverlayOpen && fftLabEnabled) {
                 AnalyzerOverlay(
                     closeText = appText.done,
                     onClose = { fftOverlayOpen = false },
@@ -2792,6 +2945,7 @@ fun BeatPulseScreen(
                 ) {
                     FftLabPage(
                         appText = appText,
+                        title = "FFT Lab",
                         audioAnalysisState = audioAnalysisState,
                         selectedProfile = tunerListenProfile,
                         selectedReaderMode = activeAudioReaderMode,
@@ -2951,9 +3105,10 @@ internal fun GlassCommandButton(
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
+        val cappedFontSize = fontSize.capDenseControlScale()
         Text(
             text = text,
-            fontSize = fontSize,
+            fontSize = cappedFontSize,
             fontWeight = FontWeight.Bold,
             color = if (prominent) {
                 MaterialTheme.colorScheme.onPrimary
@@ -2973,18 +3128,27 @@ internal fun CenteredButtonLabel(
     fontSize: TextUnit,
     fontWeight: FontWeight = FontWeight.Normal,
 ) {
+    val cappedFontSize = fontSize.capDenseControlScale()
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
-            fontSize = fontSize,
+            fontSize = cappedFontSize,
             fontWeight = fontWeight,
             textAlign = TextAlign.Center,
             maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+@Composable
+private fun TextUnit.capDenseControlScale(maxScale: Float = 1.15f): TextUnit {
+    val fontScale = LocalDensity.current.fontScale
+    val compensation = (fontScale / maxScale).coerceAtLeast(1f)
+    return (value / compensation).sp
 }
 
 private tailrec fun Context.findActivity(): Activity? {
@@ -3093,6 +3257,14 @@ private data class FreeSettingsTrialState(
     val statusText: String,
 )
 
+internal fun proFeatureControlsEnabled(
+    isProFree: Boolean,
+    trialSettingsEnabled: Boolean,
+    purchaseUnlocked: Boolean,
+): Boolean {
+    return !isProFree || trialSettingsEnabled || purchaseUnlocked
+}
+
 private fun currentEpochDay(): Long {
     return LocalDate.now().toEpochDay()
 }
@@ -3198,6 +3370,73 @@ private fun Context.saveSettingsLong(
         }
 }
 
+private fun Context.loadSettingsBoolean(
+    key: String,
+    defaultValue: Boolean,
+): Boolean {
+    return getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+        .getBoolean(key, defaultValue)
+}
+
+private fun Context.saveSettingsBoolean(
+    key: String,
+    value: Boolean,
+) {
+    getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+        .edit {
+            putBoolean(key, value)
+        }
+}
+
+private fun Context.isInstalledFromPlay(): Boolean {
+    val installerPackageName = runCatching {
+        packageManager.getInstallSourceInfo(packageName).installingPackageName
+    }.getOrNull()
+    return installerPackageName == "com.android.vending"
+}
+
+private fun Context.openPulseProListing() {
+    val activity = findActivity() ?: return
+    val explicitLaunchIntent = Intent(Intent.ACTION_MAIN)
+        .addCategory(Intent.CATEGORY_LAUNCHER)
+        .setComponent(
+            ComponentName(
+                PULSE_PRO_PACKAGE_NAME,
+                "bpm.munkz.pulse_wear.os.bpm.presentation.MainActivity",
+            ),
+        )
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching {
+        activity.startActivity(explicitLaunchIntent)
+    }.onSuccess {
+        return
+    }
+
+    packageManager.getLaunchIntentForPackage(PULSE_PRO_PACKAGE_NAME)?.let { launchIntent ->
+        runCatching {
+            activity.startActivity(launchIntent)
+        }.onSuccess {
+            return
+        }
+    }
+
+    val marketIntent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("market://details?id=$PULSE_PRO_PACKAGE_NAME"),
+    ).setPackage(PLAY_STORE_PACKAGE_NAME)
+    val webIntent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("https://play.google.com/store/apps/details?id=$PULSE_PRO_PACKAGE_NAME"),
+    )
+    runCatching {
+        activity.startActivity(marketIntent)
+    }.recoverCatching {
+        activity.startActivity(webIntent)
+    }.onFailure {
+        Toast.makeText(activity, "Pulse Pro is not available on this watch", Toast.LENGTH_SHORT).show()
+    }
+}
+
 private fun Context.showWatchFace() {
     findActivity()?.moveTaskToBack(true)
 }
@@ -3271,39 +3510,6 @@ internal fun Float?.formatCpuUsagePercent(): String {
 
     val tenths = (this * 10f).roundToInt().coerceIn(0, 1_000)
     return "${tenths / 10}.${tenths % 10}%"
-}
-
-@Composable
-private fun CpuPercentOverlay(
-    cpuUsagePercent: Float?,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .padding(start = 46.dp, top = 44.dp)
-            .width(34.dp)
-            .height(18.dp)
-            .background(
-                color = Color.Black.copy(alpha = 0.64f),
-                shape = RoundedCornerShape(7.dp),
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = cpuUsagePercent.formatCpuUsageCompactPercent(),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-private fun Float?.formatCpuUsageCompactPercent(): String {
-    if (this == null) return "--%"
-
-    return "${roundToInt().coerceIn(0, 100)}%"
 }
 
 private fun MetronomeState.hasSameNonVisualStateAs(other: MetronomeState): Boolean {

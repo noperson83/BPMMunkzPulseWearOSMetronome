@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.RECORD_AUDIO"
+        tools:node="remove" />
+
+    <application>
+        <service
+            android:name=".presentation.BpmMunkzTileService"
+            android:icon="@drawable/bpm_munkz_app_logo_metronome"
+            tools:replace="android:icon" />
+
+        <service
+            android:name=".presentation.LatestBpmComplicationDataSourceService"
+            android:icon="@drawable/bpm_munkz_app_logo_metronome"
+            tools:replace="android:icon" />
+
+        <service
+            android:name=".presentation.LatestKeyComplicationDataSourceService"
+            android:icon="@drawable/bpm_munkz_app_logo_metronome"
+            tools:replace="android:icon" />
+    </application>
+</manifest>

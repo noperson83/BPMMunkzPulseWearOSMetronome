@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#07080C"
+        android:pathData="M54,4a50,50 0,1 0,0.1 0z" />
+    <path
+        android:fillColor="#151923"
+        android:pathData="M54,9a45,45 0,1 0,0.1 0z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M58,25 C44,25 35,36 35,50 C35,60 40,67 47,72 C53,76 50,86 42,88"
+        android:strokeColor="#F6C453"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="4.8" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M58,38 C51,38 47,43 47,50 C47,56 51,59 56,61 C61,63 61,70 55,72"
+        android:strokeColor="#F6C453"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="4" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M67,39 C72,43 75,48 75,54 C75,60 72,65 67,69"
+        android:strokeColor="#66E3D4"
+        android:strokeLineCap="round"
+        android:strokeWidth="4" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M75,31 C84,38 89,46 89,54 C89,62 84,70 75,77"
+        android:strokeColor="#66E3D4"
+        android:strokeLineCap="round"
+        android:strokeWidth="3.2" />
+    <path
+        android:fillColor="#66E3D4"
+        android:pathData="M30,92 L34,92 L34,98 L39,98 L39,92 L43,92 L43,106 L39,106 L39,101 L34,101 L34,106 L30,106z" />
+    <path
+        android:fillColor="#F6C453"
+        android:pathData="M47,92 L59,92 L59,95 L51,95 L51,98 L58,98 L58,101 L51,101 L51,103 L59,103 L59,106 L47,106z" />
+    <path
+        android:fillColor="#66E3D4"
+        android:pathData="M63,92 L67,92 L73,100 L73,92 L77,92 L77,106 L73,106 L67,98 L67,106 L63,106z" />
+</vector>

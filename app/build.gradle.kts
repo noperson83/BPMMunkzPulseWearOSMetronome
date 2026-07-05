@@ -1,7 +1,22 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+val releaseKeystorePropertiesFile = rootProject.file("keystore.properties")
+val releaseKeystoreProperties = Properties().apply {
+    if (releaseKeystorePropertiesFile.exists()) {
+        releaseKeystorePropertiesFile.inputStream().use(::load)
+    }
+}
+val hasReleaseSigning = listOf(
+    "storeFile",
+    "storePassword",
+    "keyAlias",
+    "keyPassword",
+).all(releaseKeystoreProperties::containsKey)
 
 android {
     namespace = "bpm.munkz.pulse_wear.os.bpm"
@@ -23,39 +38,70 @@ android {
     productFlavors {
         create("bpm") {
             dimension = "edition"
-            applicationId = "bpm.munkz.pulse_wear.os.bpm"
-            versionNameSuffix = "-bpm"
+            applicationId = "bpm.munkz.pulse_wear.os.metronome"
+            versionCode = 6
             buildConfigField("String", "APP_EDITION", "\"bpm\"")
         }
         create("tune") {
             dimension = "edition"
-            applicationId = "bpm.munkz.pulse_wear.os.tune"
+            applicationId = "bpm.munkz.pulse_wear.os.tuner"
+            versionCode = 10
             versionNameSuffix = "-tune"
             buildConfigField("String", "APP_EDITION", "\"tune\"")
         }
         create("rhythm") {
             dimension = "edition"
             applicationId = "bpm.munkz.pulse_wear.os.rhythm"
+            versionCode = 6
             versionNameSuffix = "-rhythm"
             buildConfigField("String", "APP_EDITION", "\"rhythm\"")
         }
         create("playlist") {
             dimension = "edition"
             applicationId = "bpm.munkz.pulse_wear.os.playlist"
-            versionNameSuffix = "-playlist"
+            versionCode = 10
             buildConfigField("String", "APP_EDITION", "\"playlist\"")
         }
         create("pro") {
             dimension = "edition"
             applicationId = "bpm.munkz.pulse_wear.os.pro"
+            versionCode = 8
             versionNameSuffix = "-pro"
             buildConfigField("String", "APP_EDITION", "\"pro\"")
+        }
+        create("hearnoevil") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse_wear.os.hearnoevil"
+            versionNameSuffix = "-hearnoevil"
+            buildConfigField("String", "APP_EDITION", "\"hearnoevil\"")
+        }
+        create("fidgettoy") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse_wear.os.fidgettoy"
+            versionCode = 3
+            versionName = "1.2"
+            versionNameSuffix = "-fidgettoy"
+            buildConfigField("String", "APP_EDITION", "\"fidgettoy\"")
+        }
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseKeystoreProperties["storeFile"] as String)
+                storePassword = releaseKeystoreProperties["storePassword"] as String
+                keyAlias = releaseKeystoreProperties["keyAlias"] as String
+                keyPassword = releaseKeystoreProperties["keyPassword"] as String
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -79,6 +125,8 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.core.splashscreen)
     implementation(libs.play.services.wearable)
+    implementation(libs.play.billing)
+    implementation(libs.wear.ongoing)
     implementation(libs.ui)
     implementation(libs.ui.graphics)
     implementation(libs.ui.tooling.preview)

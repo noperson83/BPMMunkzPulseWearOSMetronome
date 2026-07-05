@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -56,6 +57,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -64,6 +66,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -96,30 +99,30 @@ internal fun PlaylistClockPage(
             .fillMaxSize()
     ) {
         val watchSClass = minOf(maxWidth, maxHeight) <= 200.dp
-        val pageHorizontalPadding = if (watchSClass) 6.dp else 8.dp
+        val pageHorizontalPadding = if (watchSClass) 10.dp else 12.dp
         val pageVerticalPadding = if (watchSClass) 8.dp else 4.dp
         val headerTopPadding = if (watchSClass) 10.dp else 14.dp
         val headerTitleFontSize = if (watchSClass) 11.sp else 12.sp
-        val songLineWidth = if (watchSClass) 116.dp else 132.dp
-        val songLineStartPadding = if (watchSClass) 8.dp else 14.dp
+        val songLineWidth = if (watchSClass) 108.dp else 124.dp
+        val songLineStartPadding = if (watchSClass) 4.dp else 8.dp
         val songLineFontSize = if (watchSClass) 10.sp else 12.sp
         val songIndexFontSize = if (watchSClass) 8.sp else 9.sp
         val editBpmTopPadding = if (watchSClass) 40.dp else 46.dp
-        val editBpmWidth = if (watchSClass) 156.dp else 180.dp
-        val editBpmEndPadding = if (watchSClass) 8.dp else 12.dp
+        val editBpmWidth = if (watchSClass) 144.dp else 168.dp
+        val editBpmEndPadding = if (watchSClass) 4.dp else 8.dp
         val editButtonWidth = if (watchSClass) 38.dp else 42.dp
         val editButtonFontSize = if (watchSClass) 8.sp else 9.sp
         val bpmFontSize = if (watchSClass) 19.sp else 22.sp
         val dialTopPadding = if (watchSClass) 8.dp else 10.dp
-        val dialSize = if (watchSClass) 108.dp else 124.dp
-        val navButtonWidth = if (watchSClass) 32.dp else 38.dp
-        val navButtonHeight = if (watchSClass) 54.dp else 64.dp
-        val navButtonFontSize = if (watchSClass) 42.sp else 50.sp
+        val dialSize = if (watchSClass) 102.dp else 118.dp
+        val navButtonWidth = if (watchSClass) 28.dp else 32.dp
+        val navButtonHeight = if (watchSClass) 48.dp else 56.dp
+        val navButtonFontSize = if (watchSClass) 32.sp else 38.sp
         val rhythmBottomPadding = if (watchSClass) 38.dp else 44.dp
-        val rhythmStartPadding = if (watchSClass) 8.dp else 14.dp
+        val rhythmStartPadding = if (watchSClass) 10.dp else 14.dp
         val rhythmFontSize = if (watchSClass) 12.sp else 14.sp
         val keyBottomPadding = if (watchSClass) 35.dp else 40.dp
-        val keyEndPadding = if (watchSClass) 8.dp else 12.dp
+        val keyEndPadding = if (watchSClass) 10.dp else 14.dp
         val keyWidth = if (watchSClass) 50.dp else 58.dp
         val keyFontSize = if (watchSClass) 15.sp else 18.sp
         val timerBottomPadding = if (watchSClass) 38.dp else 43.dp
@@ -127,6 +130,12 @@ internal fun PlaylistClockPage(
         val startButtonWidth = if (watchSClass) 94.dp else 104.dp
         val startButtonHeight = if (watchSClass) 27.dp else 30.dp
         val startButtonFontSize = if (watchSClass) 13.sp else 15.sp
+        val cappedHeaderTitleFontSize = headerTitleFontSize.capDenseTextScale()
+        val cappedSongLineFontSize = songLineFontSize.capDenseTextScale()
+        val cappedSongIndexFontSize = songIndexFontSize.capDenseTextScale()
+        val cappedBpmFontSize = bpmFontSize.capDenseTextScale()
+        val cappedRhythmFontSize = rhythmFontSize.capDenseTextScale()
+        val cappedKeyFontSize = keyFontSize.capDenseTextScale()
 
         Box(
             modifier = Modifier
@@ -141,7 +150,7 @@ internal fun PlaylistClockPage(
         ) {
             Text(
                 text = playlist.name,
-                fontSize = headerTitleFontSize,
+                fontSize = cappedHeaderTitleFontSize,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                 maxLines = 1,
@@ -150,7 +159,7 @@ internal fun PlaylistClockPage(
 
             Text(
                 text = buildAnnotatedString {
-                    withStyle(SpanStyle(fontSize = songIndexFontSize)) {
+                    withStyle(SpanStyle(fontSize = cappedSongIndexFontSize)) {
                         append("${songIndex + 1} of ${playlist.songs.size}")
                     }
                     append(" - ")
@@ -159,7 +168,7 @@ internal fun PlaylistClockPage(
                 modifier = Modifier
                     .width(songLineWidth)
                     .padding(start = songLineStartPadding),
-                fontSize = songLineFontSize,
+                fontSize = cappedSongLineFontSize,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
@@ -195,7 +204,7 @@ internal fun PlaylistClockPage(
             Text(
                 text = "${song.bpm}",
                 modifier = Modifier.align(Alignment.CenterEnd),
-                fontSize = bpmFontSize,
+                fontSize = cappedBpmFontSize,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -220,7 +229,7 @@ internal fun PlaylistClockPage(
             fontSize = navButtonFontSize,
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .padding(start = 0.dp),
+                .padding(start = if (watchSClass) 2.dp else 4.dp),
             onClick = onPreviousSong,
         )
 
@@ -231,7 +240,7 @@ internal fun PlaylistClockPage(
             fontSize = navButtonFontSize,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .padding(end = 0.dp),
+                .padding(end = if (watchSClass) 2.dp else 4.dp),
             onClick = onNextSong,
         )
 
@@ -239,7 +248,7 @@ internal fun PlaylistClockPage(
             text = if (forceSimpleRhythm) "4/4 x1" else "${song.beatsPerMeasure}/4 x${song.subdivisionCount}",
             modifier = Modifier.align(Alignment.BottomStart)
                 .padding(start = rhythmStartPadding, bottom = rhythmBottomPadding),
-            fontSize = rhythmFontSize,
+            fontSize = cappedRhythmFontSize,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -250,7 +259,7 @@ internal fun PlaylistClockPage(
                 .align(Alignment.BottomEnd)
                 .padding(end = keyEndPadding, bottom = keyBottomPadding)
                 .width(keyWidth),
-            fontSize = keyFontSize,
+            fontSize = cappedKeyFontSize,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
@@ -258,13 +267,15 @@ internal fun PlaylistClockPage(
             textAlign = TextAlign.Center,
         )
 
-        RhythmElapsedTimer(
-            isRunning = isRunning,
-            playbackStartedAtMs = playbackStartedAtMs,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = timerBottomPadding),
-        )
+        CappedDenseTextScale {
+            RhythmElapsedTimer(
+                isRunning = isRunning,
+                playbackStartedAtMs = playbackStartedAtMs,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = timerBottomPadding),
+            )
+        }
 
         GlassCommandButton(
             text = if (isRunning) appText.stopUpper else appText.startUpper,
@@ -321,7 +332,7 @@ private fun PlaylistNavButton(
     ) {
         Text(
             text = if (isNext) ">" else "<",
-            fontSize = fontSize,
+            fontSize = fontSize.capDenseTextScale(),
             fontWeight = FontWeight.Bold,
             color = chevronColor,
             textAlign = TextAlign.Center,
@@ -458,32 +469,34 @@ internal fun PlaylistEditorPopup(
     onEditRhythm: () -> Unit,
     onDone: () -> Unit,
 ) {
-    DismissibleEditorPopup(onDone = onDone) {
-        PlaylistEditorPage(
-            appText = appText,
-            playlists = playlists,
-            playlistIndex = playlistIndex,
-            songIndex = songIndex,
-            onPreviousPlaylist = onPreviousPlaylist,
-            onNextPlaylist = onNextPlaylist,
-            onAddPlaylist = onAddPlaylist,
-            onPreviousSong = onPreviousSong,
-            onNextSong = onNextSong,
-            onAddSong = onAddSong,
-            onDeleteSong = onDeleteSong,
-            onPlaylistNameEdit = onPlaylistNameEdit,
-            onSongNameEdit = onSongNameEdit,
-            onSongBpmChange = onSongBpmChange,
-            onSongBpmClick = onSongBpmClick,
-            onRhythmPresetChoice = onRhythmPresetChoice,
-            onSongKeyChange = onSongKeyChange,
-            onSongKeySet = onSongKeySet,
-            onSongNoteChange = onSongNoteChange,
-            onSongNoteEdit = onSongNoteEdit,
-            showRhythmEditor = showRhythmEditor,
-            onEditRhythm = onEditRhythm,
-            onDone = onDone,
-        )
+    CappedDenseTextScale {
+        DismissibleEditorPopup(onDone = onDone) {
+            PlaylistEditorPage(
+                appText = appText,
+                playlists = playlists,
+                playlistIndex = playlistIndex,
+                songIndex = songIndex,
+                onPreviousPlaylist = onPreviousPlaylist,
+                onNextPlaylist = onNextPlaylist,
+                onAddPlaylist = onAddPlaylist,
+                onPreviousSong = onPreviousSong,
+                onNextSong = onNextSong,
+                onAddSong = onAddSong,
+                onDeleteSong = onDeleteSong,
+                onPlaylistNameEdit = onPlaylistNameEdit,
+                onSongNameEdit = onSongNameEdit,
+                onSongBpmChange = onSongBpmChange,
+                onSongBpmClick = onSongBpmClick,
+                onRhythmPresetChoice = onRhythmPresetChoice,
+                onSongKeyChange = onSongKeyChange,
+                onSongKeySet = onSongKeySet,
+                onSongNoteChange = onSongNoteChange,
+                onSongNoteEdit = onSongNoteEdit,
+                showRhythmEditor = showRhythmEditor,
+                onEditRhythm = onEditRhythm,
+                onDone = onDone,
+            )
+        }
     }
 }
 
@@ -592,60 +605,82 @@ private fun PlaylistEditorPage(
     var keyPickerOpen by remember { mutableStateOf(false) }
     val playlistEditorScrollState = rememberScrollState()
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 2.dp, vertical = 4.dp),
+            .fillMaxSize(),
         contentAlignment = Alignment.Center,
     ) {
+        val compact = minOf(maxWidth, maxHeight) <= 220.dp
+        val horizontalSafePadding = if (compact) 22.dp else 24.dp
+        val verticalSafePadding = if (compact) 16.dp else 18.dp
+        val rowValueWidth = if (compact) 86.dp else 96.dp
+        val rowButtonSize = if (compact) 22.dp else 24.dp
+        val rowSpacing = if (compact) 2.dp else 3.dp
+        val commandHeight = if (compact) 23.dp else 25.dp
+        val compactSpacer = if (compact) 3.dp else 4.dp
+
         Column(
             modifier = Modifier
                 .verticalScroll(playlistEditorScrollState)
-                .padding(top = 20.dp, bottom = 12.dp),
+                .padding(
+                    horizontal = horizontalSafePadding,
+                    vertical = verticalSafePadding,
+                ),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 text = appText.editPlaylist,
-                fontSize = 13.sp,
+                fontSize = (if (compact) 12.sp else 13.sp).capDenseTextScale(),
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
             )
 
-            Spacer(modifier = Modifier.height(5.dp))
+            Spacer(modifier = Modifier.height(compactSpacer))
 
             ChoiceRow(
                 label = "${playlistIndex + 1}/${playlists.size}",
                 value = playlist.name,
+                valueWidth = rowValueWidth,
+                buttonSize = rowButtonSize,
+                spacing = rowSpacing,
                 onPrevious = onPreviousPlaylist,
                 onNext = onNextPlaylist,
                 onValueClick = { textEditTarget = PlaylistTextEditTarget.PlaylistName },
             )
 
-            Spacer(modifier = Modifier.height(9.dp))
+            Spacer(modifier = Modifier.height(compactSpacer))
 
             ChoiceRow(
                 label = "${appText.song} ${songIndex + 1}/${playlist.songs.size}",
                 value = song.name,
+                valueWidth = rowValueWidth,
+                buttonSize = rowButtonSize,
+                spacing = rowSpacing,
                 onPrevious = onPreviousSong,
                 onNext = onNextSong,
                 onValueClick = { textEditTarget = PlaylistTextEditTarget.SongName },
             )
 
-            Spacer(modifier = Modifier.height(9.dp))
+            Spacer(modifier = Modifier.height(compactSpacer))
 
-            RhythmPresetButtons(
-                beatsPerMeasure = song.beatsPerMeasure,
-                beatAccentTypes = song.beatAccentTypes,
-                buttonWidth = 42.dp,
-                buttonHeight = 25.dp,
-                onPresetChoice = onRhythmPresetChoice,
-            )
+            if (showRhythmEditor) {
+                RhythmPresetButtons(
+                    beatsPerMeasure = song.beatsPerMeasure,
+                    beatAccentTypes = song.beatAccentTypes,
+                    buttonWidth = if (compact) 38.dp else 40.dp,
+                    buttonHeight = commandHeight,
+                    onPresetChoice = onRhythmPresetChoice,
+                )
 
-            Spacer(modifier = Modifier.height(7.dp))
+                Spacer(modifier = Modifier.height(compactSpacer))
+            }
 
             EditValueRow(
                 label = "BPM",
                 value = "${song.bpm}",
+                valueWidth = rowValueWidth,
+                buttonSize = rowButtonSize,
+                spacing = rowSpacing,
                 onDecrease = { onSongBpmChange(-1) },
                 onIncrease = { onSongBpmChange(1) },
                 onValueClick = onSongBpmClick,
@@ -654,6 +689,9 @@ private fun PlaylistEditorPage(
             EditValueRow(
                 label = appText.key,
                 value = song.musicalKey,
+                valueWidth = rowValueWidth,
+                buttonSize = rowButtonSize,
+                spacing = rowSpacing,
                 onDecrease = { onSongKeyChange(-1) },
                 onIncrease = { onSongKeyChange(1) },
                 onValueClick = { keyPickerOpen = true },
@@ -662,22 +700,25 @@ private fun PlaylistEditorPage(
             EditValueRow(
                 label = appText.note,
                 value = song.note,
+                valueWidth = rowValueWidth,
+                buttonSize = rowButtonSize,
+                spacing = rowSpacing,
                 onDecrease = { onSongNoteChange(-1) },
                 onIncrease = { onSongNoteChange(1) },
                 onValueClick = { textEditTarget = PlaylistTextEditTarget.SongNote },
             )
 
-            Spacer(modifier = Modifier.height(7.dp))
+            Spacer(modifier = Modifier.height(compactSpacer))
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SmallCommandButton(
                     text = appText.deleteSong,
                     modifier = Modifier
-                        .width(54.dp)
-                        .height(28.dp),
+                        .width(if (compact) 44.dp else 50.dp)
+                        .height(commandHeight),
                     fontSize = 9.sp,
                     onClick = onDeleteSong,
                 )
@@ -686,46 +727,58 @@ private fun PlaylistEditorPage(
                     SmallCommandButton(
                         text = appText.editRhythm,
                         modifier = Modifier
-                            .width(92.dp)
-                            .height(28.dp),
-                        fontSize = 10.sp,
+                            .width(if (compact) 78.dp else 86.dp)
+                            .height(commandHeight),
+                        fontSize = if (compact) 8.sp else 9.sp,
                         onClick = onEditRhythm,
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(compactSpacer))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SmallCommandButton(
+                    text = appText.newList,
+                    modifier = Modifier
+                        .width(if (compact) 54.dp else 62.dp)
+                        .height(commandHeight),
+                    fontSize = 8.sp,
+                    onClick = onAddPlaylist,
+                )
+
+                SmallCommandButton(
+                    text = appText.addSong,
+                    modifier = Modifier
+                        .width(if (compact) 60.dp else 70.dp)
+                        .height(commandHeight),
+                    fontSize = 8.sp,
+                    onClick = onAddSong,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(compactSpacer))
 
             SmallCommandButton(
                 text = appText.done,
                 modifier = Modifier
-                    .width(74.dp)
-                    .height(30.dp),
-                fontSize = 11.sp,
+                    .width(68.dp)
+                    .height(commandHeight),
+                fontSize = 10.sp,
                 onClick = onDone,
             )
         }
-
-        CornerActionButton(
-            text = appText.newList,
-            modifier = Modifier.align(Alignment.TopStart),
-            mirrored = true,
-            onClick = onAddPlaylist,
-        )
-
-        CornerActionButton(
-            text = appText.addSong,
-            modifier = Modifier.align(Alignment.TopEnd),
-            onClick = onAddSong,
-        )
 
         SettingsScrollIndicator(
             scrollState = playlistEditorScrollState,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .padding(end = 2.dp)
+                .padding(end = 4.dp)
                 .width(4.dp)
-                .height(112.dp),
+                .height(if (compact) 96.dp else 108.dp),
         )
 
         if (keyPickerOpen) {
@@ -782,71 +835,73 @@ internal fun MusicalKeyPickerPopup(
 
     BackHandler(onBack = onCancel)
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.92f))
-            .clickable(onClick = {}),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
+    CappedDenseTextScale {
+        Box(
             modifier = Modifier
-                .align(Alignment.Center)
-                .offset(y = (-4).dp)
-                .width(176.dp)
-                .padding(top = 4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.92f))
+                .clickable(onClick = {}),
+            contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = "Key",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(y = (-4).dp)
+                    .width(176.dp)
+                    .padding(top = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = "Key",
+                    fontSize = 13.sp.capDenseTextScale(),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+
+                KeyPickerRow(
+                    label = "Root",
+                    value = root,
+                    onPrevious = { root = cycleOption(MusicalKeyRoots, root, -1) },
+                    onNext = { root = cycleOption(MusicalKeyRoots, root, 1) },
+                )
+
+                KeyPickerRow(
+                    label = "Mode",
+                    value = suffix.ifBlank { "maj" }.trim(),
+                    onPrevious = { suffix = cycleOption(MusicalKeyModeSuffixes, suffix, -1) },
+                    onNext = { suffix = cycleOption(MusicalKeyModeSuffixes, suffix, 1) },
+                )
+
+                Spacer(modifier = Modifier.height(5.dp))
+
+                Text(
+                    text = selectedKey,
+                    fontSize = 21.sp.capDenseTextScale(),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            PlaylistBottomActionButton(
+                text = "Back",
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .offset(y = (-8).dp),
+                mirrored = true,
+                onClick = onCancel,
             )
 
-            KeyPickerRow(
-                label = "Root",
-                value = root,
-                onPrevious = { root = cycleOption(MusicalKeyRoots, root, -1) },
-                onNext = { root = cycleOption(MusicalKeyRoots, root, 1) },
-            )
-
-            KeyPickerRow(
-                label = "Mode",
-                value = suffix.ifBlank { "maj" }.trim(),
-                onPrevious = { suffix = cycleOption(MusicalKeyModeSuffixes, suffix, -1) },
-                onNext = { suffix = cycleOption(MusicalKeyModeSuffixes, suffix, 1) },
-            )
-
-            Spacer(modifier = Modifier.height(5.dp))
-
-            Text(
-                text = selectedKey,
-                fontSize = 21.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            PlaylistBottomActionButton(
+                text = doneText,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(y = (-8).dp),
+                onClick = { onCommit(selectedKey) },
             )
         }
-
-        PlaylistBottomActionButton(
-            text = "Back",
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .offset(y = (-12).dp),
-            mirrored = true,
-            onClick = onCancel,
-        )
-
-        PlaylistBottomActionButton(
-            text = doneText,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .offset(y = (-12).dp),
-            onClick = { onCommit(selectedKey) },
-        )
     }
 }
 
@@ -859,7 +914,7 @@ private fun KeyPickerRow(
 ) {
     Text(
         text = label,
-        fontSize = 9.sp,
+        fontSize = 9.sp.capDenseTextScale(),
         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
     )
 
@@ -876,7 +931,7 @@ private fun KeyPickerRow(
         Text(
             text = value,
             modifier = Modifier.width(88.dp),
-            fontSize = 13.sp,
+            fontSize = 13.sp.capDenseTextScale(),
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
             textAlign = TextAlign.Center,
@@ -903,12 +958,11 @@ private fun PlaylistBottomActionButton(
         text = text,
         modifier = modifier
             .padding(
-                start = if (mirrored) 2.dp else 0.dp,
-                end = if (mirrored) 0.dp else 2.dp,
-                bottom = 16.dp,
+                start = if (mirrored) 8.dp else 0.dp,
+                end = if (mirrored) 0.dp else 8.dp,
+                bottom = 8.dp,
             )
-            .rotate(if (mirrored) 38f else -38f)
-            .width(64.dp)
+            .width(58.dp)
             .height(24.dp),
         fontSize = 7.sp,
         onClick = onClick,
@@ -919,40 +973,43 @@ private fun PlaylistBottomActionButton(
 private fun ChoiceRow(
     label: String,
     value: String,
+    valueWidth: Dp = 106.dp,
+    buttonSize: Dp = 26.dp,
+    spacing: Dp = 4.dp,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onValueClick: () -> Unit,
 ) {
     Text(
         text = label,
-        fontSize = 10.sp,
+        fontSize = 10.sp.capDenseTextScale(),
         color = MaterialTheme.colorScheme.onBackground,
     )
 
     Spacer(modifier = Modifier.height(2.dp))
 
     Row(
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(spacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SmallCommandButton(
             text = "<",
-            modifier = Modifier.size(28.dp),
-            fontSize = 13.sp,
+            modifier = Modifier.size(buttonSize),
+            fontSize = 12.sp,
             onClick = onPrevious,
         )
 
         PillValueButton(
             value = value,
-            modifier = Modifier.width(118.dp),
-            fontSize = 12.sp,
+            modifier = Modifier.width(valueWidth),
+            fontSize = 11.sp,
             onClick = onValueClick,
         )
 
         SmallCommandButton(
             text = ">",
-            modifier = Modifier.size(28.dp),
-            fontSize = 13.sp,
+            modifier = Modifier.size(buttonSize),
+            fontSize = 12.sp,
             onClick = onNext,
         )
     }
@@ -985,34 +1042,37 @@ private fun CornerActionButton(
 private fun EditValueRow(
     label: String,
     value: String,
+    valueWidth: Dp = 106.dp,
+    buttonSize: Dp = 26.dp,
+    spacing: Dp = 4.dp,
     onDecrease: () -> Unit,
     onIncrease: () -> Unit,
     onValueClick: (() -> Unit)? = null,
 ) {
     Text(
         text = label,
-        fontSize = 10.sp,
+        fontSize = 10.sp.capDenseTextScale(),
         color = MaterialTheme.colorScheme.onBackground,
     )
 
     Spacer(modifier = Modifier.height(2.dp))
 
     Row(
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(spacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SmallCommandButton(
             text = "-",
-            modifier = Modifier.size(28.dp),
-            fontSize = 14.sp,
+            modifier = Modifier.size(buttonSize),
+            fontSize = 13.sp,
             onClick = onDecrease,
         )
 
         if (onValueClick == null) {
             Text(
                 text = value,
-                modifier = Modifier.width(118.dp),
-                fontSize = 12.sp,
+                modifier = Modifier.width(valueWidth),
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,
@@ -1022,16 +1082,16 @@ private fun EditValueRow(
         } else {
             PillValueButton(
                 value = value,
-                modifier = Modifier.width(118.dp),
-                fontSize = 12.sp,
+                modifier = Modifier.width(valueWidth),
+                fontSize = 11.sp,
                 onClick = onValueClick,
             )
         }
 
         SmallCommandButton(
             text = "+",
-            modifier = Modifier.size(28.dp),
-            fontSize = 14.sp,
+            modifier = Modifier.size(buttonSize),
+            fontSize = 13.sp,
             onClick = onIncrease,
         )
     }
@@ -1052,6 +1112,29 @@ private fun PillValueButton(
         fontSize = fontSize,
         onClick = onClick,
     )
+}
+
+@Composable
+private fun TextUnit.capDenseTextScale(maxScale: Float = 1.15f): TextUnit {
+    val fontScale = LocalDensity.current.fontScale
+    val compensation = (fontScale / maxScale).coerceAtLeast(1f)
+    return (value / compensation).sp
+}
+
+@Composable
+private fun CappedDenseTextScale(
+    maxScale: Float = 1.15f,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val cappedDensity = Density(
+        density = density.density,
+        fontScale = density.fontScale.coerceAtMost(maxScale),
+    )
+
+    CompositionLocalProvider(LocalDensity provides cappedDensity) {
+        content()
+    }
 }
 
 @Composable

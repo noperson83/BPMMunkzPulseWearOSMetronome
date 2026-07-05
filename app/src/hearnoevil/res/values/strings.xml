@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Hear No Evil</string>
+    <string name="tile_label">Hear No Evil</string>
+    <string name="tile_description">Quick launch tile for Hear No Evil song learner.</string>
+</resources>

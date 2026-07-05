@@ -1,2 +1,2 @@
 <resources xmlns:tools="http://schemas.android.com/tools"
-    tools:keep="@drawable/bpm_munkz_app_logo,@drawable/bpm_munkz_app_logo_edition,@drawable/bpm_munkz_app_logo_free,@drawable/bpm_munkz_app_logo_metronome,@drawable/bpm_munkz_app_logo_tuner,@drawable/bpm_munkz_app_logo_rhythm,@drawable/bpm_munkz_app_logo_playlist,@drawable/bpm_munkz_app_logo_pro" />
+    tools:keep="@drawable/bpm_munkz_app_logo,@drawable/bpm_munkz_app_logo_edition,@drawable/bpm_munkz_app_logo_free,@drawable/bpm_munkz_app_logo_metronome,@drawable/bpm_munkz_app_logo_tuner,@drawable/bpm_munkz_app_logo_rhythm,@drawable/bpm_munkz_app_logo_playlist,@drawable/bpm_munkz_app_logo_pro,@drawable/munkz_fidget_toy_logo" />

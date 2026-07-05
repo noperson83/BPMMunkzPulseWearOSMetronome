@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Munkz Fidget Toy</string>
+    <string name="tile_label">Munkz Fidget Toy</string>
+    <string name="tile_description">Quick launch tile for Munkz Fidget Toy.</string>
+</resources>

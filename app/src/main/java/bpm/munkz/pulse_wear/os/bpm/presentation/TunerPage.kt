@@ -278,7 +278,7 @@ fun TunerPage(
                 )
 
                 Text(
-                    text = "--",
+                    text = guessedKey ?: "--",
                     fontSize = keyGuessFontSize,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,

@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import bpm.munkz.pulse_wear.os.bpm.BuildConfig
 import kotlin.math.abs
 import kotlin.math.max
 @Composable
@@ -346,7 +348,12 @@ internal fun SimpleSettingsPage(
     trialStatusText: String = "Settings locked",
     trialButtonText: String = "30 Day Trial",
     trialButtonEnabled: Boolean = true,
+    buyStatusText: String = "Connect Play",
+    buyThisAppEnabled: Boolean = false,
+    pulseProEnabled: Boolean = true,
     onStartTrial: () -> Unit = {},
+    onBuyThisApp: () -> Unit = {},
+    onOpenPulsePro: () -> Unit = {},
     onHapticsToggle: () -> Unit,
     onBeepToggle: () -> Unit,
     onBeatSoundModeChoice: (BeatSoundMode) -> Unit,
@@ -595,12 +602,14 @@ internal fun SimpleSettingsPage(
 
             Spacer(modifier = Modifier.height(sectionSpacing))
 
-            SettingsDiagnosticsSection(
-                appText = appText,
-                appCpuUsagePercent = appCpuUsagePercent,
-                titleFontSize = sectionTitleFontSize,
-                spacing = tightSpacing,
-            )
+            if (showSettingsDiagnostics) {
+                SettingsDiagnosticsSection(
+                    appText = appText,
+                    appCpuUsagePercent = appCpuUsagePercent,
+                    titleFontSize = sectionTitleFontSize,
+                    spacing = tightSpacing,
+                )
+            }
         }
 
         SettingsScrollIndicator(
@@ -617,8 +626,18 @@ internal fun SimpleSettingsPage(
                 trialStatusText = trialStatusText,
                 trialButtonText = trialButtonText,
                 trialButtonEnabled = trialButtonEnabled,
+                buyStatusText = buyStatusText,
+                buyThisAppEnabled = buyThisAppEnabled,
+                pulseProEnabled = pulseProEnabled,
                 onStartTrial = {
                     onStartTrial()
+                    buyNowPopupOpen = false
+                },
+                onBuyThisApp = {
+                    onBuyThisApp()
+                },
+                onOpenPulsePro = {
+                    onOpenPulsePro()
                     buyNowPopupOpen = false
                 },
                 onDismiss = {
@@ -671,7 +690,12 @@ internal fun TuneSettingsPage(
     trialStatusText: String,
     trialButtonText: String,
     trialButtonEnabled: Boolean,
+    buyStatusText: String = "Connect Play",
+    buyThisAppEnabled: Boolean = false,
+    pulseProEnabled: Boolean = true,
     onStartTrial: () -> Unit,
+    onBuyThisApp: () -> Unit = {},
+    onOpenPulsePro: () -> Unit = {},
     onA4ReferenceHzChange: (Int) -> Unit,
     onKeepScreenModeChoice: (KeepScreenMode) -> Unit,
     onMainColorChoice: (Int) -> Unit,
@@ -807,12 +831,14 @@ internal fun TuneSettingsPage(
 
             Spacer(modifier = Modifier.height(sectionSpacing))
 
-            SettingsDiagnosticsSection(
-                appText = appText,
-                appCpuUsagePercent = appCpuUsagePercent,
-                titleFontSize = sectionTitleFontSize,
-                spacing = tightSpacing,
-            )
+            if (showSettingsDiagnostics) {
+                SettingsDiagnosticsSection(
+                    appText = appText,
+                    appCpuUsagePercent = appCpuUsagePercent,
+                    titleFontSize = sectionTitleFontSize,
+                    spacing = tightSpacing,
+                )
+            }
         }
 
         SettingsScrollIndicator(
@@ -829,8 +855,16 @@ internal fun TuneSettingsPage(
                 trialStatusText = trialStatusText,
                 trialButtonText = trialButtonText,
                 trialButtonEnabled = trialButtonEnabled,
+                buyStatusText = buyStatusText,
+                buyThisAppEnabled = buyThisAppEnabled,
+                pulseProEnabled = pulseProEnabled,
                 onStartTrial = {
                     onStartTrial()
+                    buyNowPopupOpen = false
+                },
+                onBuyThisApp = onBuyThisApp,
+                onOpenPulsePro = {
+                    onOpenPulsePro()
                     buyNowPopupOpen = false
                 },
                 onDismiss = {
@@ -853,6 +887,8 @@ internal fun PlaylistSettingsPage(
     keepScreenMode: KeepScreenMode,
     mainColorArgb: Int,
     backgroundColorArgb: Int,
+    ringColorArgb: Int,
+    bigRingFlashMode: BigRingFlashMode,
     clockColorArgb: Int,
     clockImageIndex: Int,
     appLanguage: AppLanguage,
@@ -862,7 +898,12 @@ internal fun PlaylistSettingsPage(
     trialStatusText: String,
     trialButtonText: String,
     trialButtonEnabled: Boolean,
+    buyStatusText: String = "Connect Play",
+    buyThisAppEnabled: Boolean = false,
+    pulseProEnabled: Boolean = true,
     onStartTrial: () -> Unit,
+    onBuyThisApp: () -> Unit = {},
+    onOpenPulsePro: () -> Unit = {},
     onHapticsToggle: () -> Unit,
     onBeepToggle: () -> Unit,
     onBeatSoundModeChoice: (BeatSoundMode) -> Unit,
@@ -872,6 +913,8 @@ internal fun PlaylistSettingsPage(
     onKeepScreenModeChoice: (KeepScreenMode) -> Unit,
     onMainColorChoice: (Int) -> Unit,
     onBackgroundColorChoice: (Int) -> Unit,
+    onRingColorChoice: (Int) -> Unit,
+    onBigRingModeChoice: (BigRingFlashMode) -> Unit,
     onClockColorChoice: (Int) -> Unit,
     onClockImageChoice: (Int) -> Unit,
     onLanguageChoice: (AppLanguage) -> Unit,
@@ -1067,6 +1110,30 @@ internal fun PlaylistSettingsPage(
             Spacer(modifier = Modifier.height(sectionSpacing))
 
             Text(
+                text = appText.bigRing,
+                fontSize = labelFontSize,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = enabledAlpha),
+            )
+            Spacer(modifier = Modifier.height(tightSpacing))
+            ColorPickerRow(
+                selectedColorArgb = ringColorArgb,
+                onColorChoice = onRingColorChoice,
+                colorOptions = PulseColorOptions,
+                enabled = settingsEnabled,
+            )
+
+            Spacer(modifier = Modifier.height(tightSpacing))
+
+            BigRingModePicker(
+                selectedMode = bigRingFlashMode,
+                appLanguage = appLanguage,
+                enabled = settingsEnabled,
+                onModeChoice = onBigRingModeChoice,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            Text(
                 text = appText.clock,
                 fontSize = sectionTitleFontSize,
                 fontWeight = FontWeight.Bold,
@@ -1118,12 +1185,14 @@ internal fun PlaylistSettingsPage(
 
             Spacer(modifier = Modifier.height(sectionSpacing))
 
-            SettingsDiagnosticsSection(
-                appText = appText,
-                appCpuUsagePercent = appCpuUsagePercent,
-                titleFontSize = sectionTitleFontSize,
-                spacing = tightSpacing,
-            )
+            if (showSettingsDiagnostics) {
+                SettingsDiagnosticsSection(
+                    appText = appText,
+                    appCpuUsagePercent = appCpuUsagePercent,
+                    titleFontSize = sectionTitleFontSize,
+                    spacing = tightSpacing,
+                )
+            }
         }
 
         SettingsScrollIndicator(
@@ -1140,8 +1209,16 @@ internal fun PlaylistSettingsPage(
                 trialStatusText = trialStatusText,
                 trialButtonText = trialButtonText,
                 trialButtonEnabled = trialButtonEnabled,
+                buyStatusText = buyStatusText,
+                buyThisAppEnabled = buyThisAppEnabled,
+                pulseProEnabled = pulseProEnabled,
                 onStartTrial = {
                     onStartTrial()
+                    buyNowPopupOpen = false
+                },
+                onBuyThisApp = onBuyThisApp,
+                onOpenPulsePro = {
+                    onOpenPulsePro()
                     buyNowPopupOpen = false
                 },
                 onDismiss = {
@@ -1182,7 +1259,12 @@ internal fun SettingsPage(
     trialStatusText: String = "Settings locked",
     trialButtonText: String = "30 Day Trial",
     trialButtonEnabled: Boolean = true,
+    buyStatusText: String = "Connect Play",
+    buyThisAppEnabled: Boolean = false,
+    pulseProEnabled: Boolean = true,
     onStartTrial: () -> Unit = {},
+    onBuyThisApp: () -> Unit = {},
+    onOpenPulsePro: () -> Unit = {},
     onHapticsToggle: () -> Unit,
     onBeepToggle: () -> Unit,
     onBeatSoundModeChoice: (BeatSoundMode) -> Unit,
@@ -1220,7 +1302,12 @@ internal fun SettingsPage(
             trialStatusText = trialStatusText,
             trialButtonText = trialButtonText,
             trialButtonEnabled = trialButtonEnabled,
+            buyStatusText = buyStatusText,
+            buyThisAppEnabled = buyThisAppEnabled,
+            pulseProEnabled = pulseProEnabled,
             onStartTrial = onStartTrial,
+            onBuyThisApp = onBuyThisApp,
+            onOpenPulsePro = onOpenPulsePro,
             onHapticsToggle = onHapticsToggle,
             onBeepToggle = onBeepToggle,
             onBeatSoundModeChoice = onBeatSoundModeChoice,
@@ -1557,12 +1644,14 @@ internal fun SettingsPage(
 
             Spacer(modifier = Modifier.height(sectionSpacing))
 
-            SettingsDiagnosticsSection(
-                appText = appText,
-                appCpuUsagePercent = appCpuUsagePercent,
-                titleFontSize = sectionTitleFontSize,
-                spacing = tightSpacing,
-            )
+            if (showSettingsDiagnostics) {
+                SettingsDiagnosticsSection(
+                    appText = appText,
+                    appCpuUsagePercent = appCpuUsagePercent,
+                    titleFontSize = sectionTitleFontSize,
+                    spacing = tightSpacing,
+                )
+            }
         }
 
         SettingsScrollIndicator(
@@ -1603,10 +1692,15 @@ internal fun SettingsPage(
                 trialStatusText = trialStatusText,
                 trialButtonText = trialButtonText,
                 trialButtonEnabled = trialButtonEnabled,
+                buyStatusText = buyStatusText,
+                buyThisAppEnabled = buyThisAppEnabled,
+                pulseProEnabled = pulseProEnabled,
                 onStartTrial = {
                     onStartTrial()
                     buyNowPopupOpen = false
                 },
+                onBuyThisApp = onBuyThisApp,
+                onOpenPulsePro = onOpenPulsePro,
                 onDismiss = {
                     buyNowPopupOpen = false
                 },
@@ -1681,6 +1775,11 @@ private fun CpuUsageReadout(
         )
     }
 }
+
+private val showSettingsDiagnostics: Boolean
+    get() = BuildConfig.DEBUG &&
+        BuildConfig.APP_EDITION != "rhythm" &&
+        BuildConfig.APP_EDITION != "tune"
 
 @Composable
 private fun SettingsDiagnosticsSection(
@@ -2171,77 +2270,109 @@ private fun BuyNowChoicePopup(
     trialStatusText: String,
     trialButtonText: String,
     trialButtonEnabled: Boolean,
+    buyStatusText: String = "Connect Play",
+    buyThisAppEnabled: Boolean = false,
+    pulseProEnabled: Boolean = true,
     onStartTrial: () -> Unit,
+    onBuyThisApp: () -> Unit = {},
+    onOpenPulsePro: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     BackHandler(onBack = onDismiss)
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.94f)),
+            .background(Color.Black),
         contentAlignment = Alignment.Center,
     ) {
+        val compact = maxWidth < 220.dp
+        val horizontalPadding = if (compact) 42.dp else 48.dp
+        val contentWidth = if (compact) 110.dp else 118.dp
+        val buttonHeight = if (compact) 24.dp else 25.dp
+        val titleSize = if (compact) 11.sp else 12.sp
+        val buttonTextSize = if (compact) 8.sp else 9.sp
+        val purchaseUnlocked = buyStatusText == "Unlocked"
+
         Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = horizontalPadding, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
         ) {
             Text(
                 text = "Choose Upgrade",
-                fontSize = 15.sp,
+                fontSize = titleSize,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
             )
 
+            if (!purchaseUnlocked) {
+                Text(
+                    text = trialStatusText,
+                    modifier = Modifier.width(contentWidth),
+                    fontSize = 7.sp,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+
+                SettingsCommandButton(
+                    text = trialButtonText,
+                    modifier = Modifier
+                        .width(contentWidth)
+                        .height(buttonHeight),
+                    fontSize = buttonTextSize,
+                    prominent = true,
+                    enabled = trialButtonEnabled,
+                    onClick = onStartTrial,
+                )
+
+                SettingsCommandButton(
+                    text = "Buy this app",
+                    modifier = Modifier
+                        .width(contentWidth)
+                        .height(buttonHeight),
+                    fontSize = buttonTextSize,
+                    prominent = true,
+                    enabled = buyThisAppEnabled,
+                    onClick = onBuyThisApp,
+                )
+            }
+
             Text(
-                text = trialStatusText,
-                modifier = Modifier.width(144.dp),
-                fontSize = 9.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
+                text = buyStatusText,
+                modifier = Modifier.width(contentWidth),
+                fontSize = 7.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f),
                 textAlign = TextAlign.Center,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
 
-            SettingsCommandButton(
-                text = trialButtonText,
-                modifier = Modifier
-                    .width(136.dp)
-                    .height(30.dp),
-                fontSize = 11.sp,
-                prominent = true,
-                enabled = trialButtonEnabled,
-                onClick = onStartTrial,
-            )
-
-            SettingsCommandButton(
-                text = "Buy this app",
-                modifier = Modifier
-                    .width(136.dp)
-                    .height(30.dp),
-                fontSize = 11.sp,
-                prominent = true,
-                onClick = onDismiss,
-            )
-
-            SettingsCommandButton(
-                text = "Pulse Pro",
-                modifier = Modifier
-                    .width(136.dp)
-                    .height(30.dp),
-                fontSize = 11.sp,
-                prominent = true,
-                onClick = onDismiss,
-            )
+            if (pulseProEnabled) {
+                SettingsCommandButton(
+                    text = "Pulse Pro",
+                    modifier = Modifier
+                        .width(contentWidth)
+                        .height(buttonHeight),
+                    fontSize = buttonTextSize,
+                    prominent = true,
+                    onClick = onOpenPulsePro,
+                )
+            }
 
             SettingsCommandButton(
                 text = "Done",
                 modifier = Modifier
-                    .width(72.dp)
-                    .height(26.dp),
-                fontSize = 10.sp,
+                    .width(58.dp)
+                    .height(20.dp),
+                fontSize = 8.sp,
                 onClick = onDismiss,
             )
         }
@@ -2283,9 +2414,10 @@ private fun SettingsCommandButton(
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
+        val cappedFontSize = fontSize.capDenseControlScale()
         Text(
             text = text,
-            fontSize = fontSize,
+            fontSize = cappedFontSize,
             fontWeight = FontWeight.Bold,
             color = if (prominent) {
                 MaterialTheme.colorScheme.onPrimary.copy(alpha = enabledAlpha)
@@ -2297,4 +2429,11 @@ private fun SettingsCommandButton(
             textAlign = TextAlign.Center,
         )
     }
+}
+
+@Composable
+private fun TextUnit.capDenseControlScale(maxScale: Float = 1.15f): TextUnit {
+    val fontScale = LocalDensity.current.fontScale
+    val compensation = (fontScale / maxScale).coerceAtLeast(1f)
+    return (value / compensation).sp
 }

@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">BPM Munkz Pulse</string>
+    <string name="tile_label">BPM Munkz</string>
+    <string name="tile_description">Acceso rapido para BPM Munkz Pulse.</string>
+    <string name="complication_latest_bpm">BPM reciente</string>
+    <string name="complication_latest_key">Tono reciente</string>
+</resources>

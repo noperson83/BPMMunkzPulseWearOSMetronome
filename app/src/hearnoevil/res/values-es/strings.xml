@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Hear No Evil</string>
+    <string name="tile_label">Hear No Evil</string>
+    <string name="tile_description">Acceso rapido para Hear No Evil.</string>
+</resources>

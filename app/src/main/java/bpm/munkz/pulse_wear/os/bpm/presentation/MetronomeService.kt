@@ -2,7 +2,6 @@ package bpm.munkz.pulse_wear.os.bpm.presentation
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -11,7 +10,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -27,7 +25,10 @@ import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.core.app.NotificationCompat
 import androidx.core.content.edit
+import androidx.wear.ongoing.OngoingActivity
+import androidx.wear.ongoing.Status
 import bpm.munkz.pulse_wear.os.bpm.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -640,7 +641,7 @@ class MetronomeService : Service() {
         return checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(): android.app.Notification {
         val currentState = mutableState.value
         val openAppIntent = PendingIntent.getActivity(
             this,
@@ -655,21 +656,34 @@ class MetronomeService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        return Notification.Builder(this, METRONOME_CHANNEL_ID)
+        val notificationBuilder = NotificationCompat.Builder(this, METRONOME_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_metronome_notification)
             .setContentTitle(getString(R.string.app_name))
             .setContentText("${currentState.bpm} BPM")
             .setContentIntent(openAppIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setCategory(Notification.CATEGORY_STATUS)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
             .addAction(
-                Notification.Action.Builder(
-                    Icon.createWithResource(this, R.drawable.ic_metronome_notification),
+                NotificationCompat.Action.Builder(
+                    R.drawable.ic_metronome_notification,
                     "Stop",
                     stopIntent,
                 ).build(),
             )
+
+        OngoingActivity.Builder(this, METRONOME_NOTIFICATION_ID, notificationBuilder)
+            .setStaticIcon(R.drawable.ic_metronome_notification)
+            .setTouchIntent(openAppIntent)
+            .setStatus(
+                Status.Builder()
+                    .addTemplate("${currentState.bpm} BPM")
+                    .build(),
+            )
+            .build()
+            .apply(this)
+
+        return notificationBuilder
             .build()
     }
 

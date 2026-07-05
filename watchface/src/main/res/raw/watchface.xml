@@ -109,7 +109,7 @@
             isCustomizable="TRUE">
             <BoundingBox x="0" y="0" width="108" height="48" outlinePadding="4" />
             <DefaultProviderPolicy
-                primaryProvider="bpm.munkz.pulse_wear.os.free/bpm.munkz.pulse_wear.os.free.presentation.LatestBpmComplicationDataSourceService"
+                primaryProvider="bpm.munkz.pulse_wear.os.pro/bpm.munkz.pulse_wear.os.bpm.presentation.LatestBpmComplicationDataSourceService"
                 primaryProviderType="SHORT_TEXT"
                 defaultSystemProvider="EMPTY"
                 defaultSystemProviderType="EMPTY" />
@@ -140,7 +140,7 @@
             isCustomizable="TRUE">
             <BoundingBox x="0" y="0" width="108" height="48" outlinePadding="4" />
             <DefaultProviderPolicy
-                primaryProvider="bpm.munkz.pulse_wear.os.free/bpm.munkz.pulse_wear.os.free.presentation.LatestKeyComplicationDataSourceService"
+                primaryProvider="bpm.munkz.pulse_wear.os.pro/bpm.munkz.pulse_wear.os.bpm.presentation.LatestKeyComplicationDataSourceService"
                 primaryProviderType="SHORT_TEXT"
                 defaultSystemProvider="EMPTY"
                 defaultSystemProviderType="EMPTY" />

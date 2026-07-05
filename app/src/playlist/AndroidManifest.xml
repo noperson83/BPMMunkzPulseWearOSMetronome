@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.RECORD_AUDIO"
+        tools:node="remove" />
+
+    <application>
+        <service
+            android:name=".presentation.BpmMunkzTileService"
+            tools:node="remove" />
+
+        <service
+            android:name=".presentation.LatestBpmComplicationDataSourceService"
+            tools:node="remove" />
+
+        <service
+            android:name=".presentation.LatestKeyComplicationDataSourceService"
+            tools:node="remove" />
+    </application>
+
+</manifest>
