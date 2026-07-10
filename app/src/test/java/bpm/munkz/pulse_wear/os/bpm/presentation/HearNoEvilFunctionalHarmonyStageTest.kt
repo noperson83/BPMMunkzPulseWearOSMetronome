@@ -45,6 +45,22 @@ class HearNoEvilFunctionalHarmonyStageTest {
         assertEquals("II7 dominant secondary dominant V/G altered dominant", TunerTheoryTestApi.functionalHarmonySummary("C", "D7#9"))
     }
 
+    @Test
+    fun progressionRomanLabelsStayAlignedWithChordSlots() {
+        assertEquals(
+            listOf("I", "V", "vi", "IV"),
+            TunerTheoryTestApi.functionalHarmonyProgression("C", listOf("C", "G", "Am", "F")),
+        )
+        assertEquals(
+            listOf("i", "bVII", "bVI", "V7"),
+            TunerTheoryTestApi.functionalHarmonyProgression("Am", listOf("Am", "G", "F", "E7")),
+        )
+        assertEquals(
+            listOf("I", "VI7", "II7", "V7"),
+            TunerTheoryTestApi.functionalHarmonyProgression("C", listOf("C", "A7", "D7#9", "G7")),
+        )
+    }
+
     private fun assertHarmony(
         key: String,
         chord: String,

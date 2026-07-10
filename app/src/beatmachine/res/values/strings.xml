@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Munkz Beat Machine</string>
+    <string name="tile_label">Beat Machine</string>
+    <string name="tile_description">Quick launch tile for Munkz Beat Machine.</string>
+</resources>

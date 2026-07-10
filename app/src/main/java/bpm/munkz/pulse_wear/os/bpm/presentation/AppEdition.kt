@@ -9,6 +9,7 @@ internal enum class AppEdition {
     Playlist,
     Pro,
     HearNoEvil,
+    BeatMachine,
     FidgetToy,
 }
 
@@ -25,6 +26,7 @@ internal data class AppFeatureSet(
     val isRhythmOnly: Boolean = edition == AppEdition.Rhythm
     val isPlaylistOnly: Boolean = edition == AppEdition.Playlist
     val isHearNoEvilOnly: Boolean = edition == AppEdition.HearNoEvil
+    val isBeatMachineOnly: Boolean = edition == AppEdition.BeatMachine
     val isFidgetToyOnly: Boolean = edition == AppEdition.FidgetToy
 }
 
@@ -37,6 +39,7 @@ internal object AppEditionConfig {
             BuildConfig.APP_EDITION == "playlist" -> AppEdition.Playlist
             BuildConfig.APP_EDITION == "pro" -> AppEdition.Pro
             BuildConfig.APP_EDITION == "hearnoevil" -> AppEdition.HearNoEvil
+            BuildConfig.APP_EDITION == "beatmachine" -> AppEdition.BeatMachine
             BuildConfig.APP_EDITION == "fidgettoy" -> AppEdition.FidgetToy
             packageName.endsWith(".metronome") -> AppEdition.Bpm
             packageName.endsWith(".tune") ||
@@ -45,6 +48,7 @@ internal object AppEditionConfig {
             packageName.endsWith(".playlist") -> AppEdition.Playlist
             packageName.endsWith(".pro") -> AppEdition.Pro
             packageName.endsWith(".hearnoevil") -> AppEdition.HearNoEvil
+            packageName.endsWith(".beatmachine") -> AppEdition.BeatMachine
             packageName.endsWith(".fidgettoy") -> AppEdition.FidgetToy
             else -> AppEdition.Bpm
         }
@@ -61,6 +65,7 @@ internal object AppEditionConfig {
             AppEdition.Playlist -> PLAYLIST_PAGE_COUNT
             AppEdition.Pro -> PULSE_PAGE_COUNT
             AppEdition.HearNoEvil -> 1
+            AppEdition.BeatMachine -> 1
             AppEdition.FidgetToy -> 1
             },
             showTunerEntry = edition == AppEdition.Pro || edition == AppEdition.Tune || edition == AppEdition.HearNoEvil,

@@ -5,6 +5,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HearNoEvilRootChordStageTest {
+    private val noteClasses = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+
     @Test
     fun singleNoteLocksRootWithoutInventingChordQuality() {
         assertEquals("C" to listOf("C", "--", "G"), rootAnchored("C", "C"))
@@ -72,6 +74,89 @@ class HearNoEvilRootChordStageTest {
             "Am" to listOf("A", "C", "E"),
             rootAnchored("A", mapOf("A" to 1f, "E" to 0.92f, "C" to 0.62f)),
         )
+        assertEquals(
+            "Am" to listOf("A", "C", "E"),
+            rootAnchored("A", mapOf("A" to 1f, "E" to 0.82f, "C" to 0.32f, "C#" to 0.25f)),
+        )
+    }
+
+    @Test
+    fun majorThirdIntervalWorksAcrossAllRoots() {
+        noteClasses.forEachIndexed { index, root ->
+            val third = noteAt(index, 4)
+            val expected = root
+            assertEquals(
+                "$root + $third should read $expected",
+                expected to listOf(root, third, noteAt(index, 7)),
+                rootAnchored(root, mapOf(root to 1f, third to 0.74f)),
+            )
+        }
+    }
+
+    @Test
+    fun minorThirdIntervalWorksAcrossAllRoots() {
+        noteClasses.forEachIndexed { index, root ->
+            val third = noteAt(index, 3)
+            val expected = "${root}m"
+            assertEquals(
+                "$root + $third should read $expected",
+                expected to listOf(root, third, noteAt(index, 7)),
+                rootAnchored(root, mapOf(root to 1f, third to 0.74f)),
+            )
+        }
+    }
+
+    @Test
+    fun weakThirdIntervalsStayRootOnlyAcrossAllRoots() {
+        noteClasses.forEachIndexed { index, root ->
+            assertEquals(
+                "$root weak major third should stay root-only",
+                root to listOf(root, "--", noteAt(index, 7)),
+                rootAnchored(root, mapOf(root to 1f, noteAt(index, 4) to 0.16f)),
+            )
+            assertEquals(
+                "$root weak minor third should stay root-only",
+                root to listOf(root, "--", noteAt(index, 7)),
+                rootAnchored(root, mapOf(root to 1f, noteAt(index, 3) to 0.16f)),
+            )
+        }
+    }
+
+    @Test
+    fun thirdBeatsCommonColorDistractorsAcrossAllRoots() {
+        noteClasses.forEachIndexed { index, root ->
+            val major = rootAnchored(
+                root,
+                mapOf(
+                    root to 1f,
+                    noteAt(index, 4) to 0.66f,
+                    noteAt(index, 7) to 0.58f,
+                    noteAt(index, 2) to 0.24f,
+                    noteAt(index, 10) to 0.22f,
+                ),
+            )
+            assertTrue(
+                "$root major third should keep major polarity, got ${major.first}",
+                major.first == root || major.first.startsWith("${root}7") || major.first.startsWith("${root}maj"),
+            )
+            assertEquals(listOf(root, noteAt(index, 4), noteAt(index, 7)), major.second)
+
+            val minor = rootAnchored(
+                root,
+                mapOf(
+                    root to 1f,
+                    noteAt(index, 3) to 0.66f,
+                    noteAt(index, 7) to 0.58f,
+                    noteAt(index, 2) to 0.24f,
+                    noteAt(index, 10) to 0.22f,
+                ),
+            )
+            assertTrue(
+                "$root minor third should keep minor polarity, got ${minor.first}",
+                minor.first == "${root}m" || minor.first.startsWith("${root}m7"),
+            )
+            assertEquals(listOf(root, noteAt(index, 3), noteAt(index, 7)), minor.second)
+        }
     }
 
     @Test
@@ -128,5 +213,9 @@ class HearNoEvilRootChordStageTest {
         return groupingBy { it }
             .eachCount()
             .mapValues { (_, count) -> count.toFloat() }
+    }
+
+    private fun noteAt(rootIndex: Int, offset: Int): String {
+        return noteClasses[(rootIndex + offset).mod(noteClasses.size)]
     }
 }

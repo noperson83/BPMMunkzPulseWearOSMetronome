@@ -36,11 +36,13 @@ data class AudioAnalysisState(
     val keyCandidates: List<String> = emptyList(),
     val chordTones: List<String> = emptyList(),
     val chordProgression: List<String> = emptyList(),
+    val harmonyProgression: List<String> = emptyList(),
     val phraseLengthBars: Int? = null,
     val phraseConfidence: Float = 0f,
     val phraseBarIndex: Int = 0,
     val phraseLocked: Boolean = false,
     val phraseSource: String = "",
+    val phraseSectionLabel: String = "",
     val downbeatGuess: Int = 0,
     val downbeatConfidence: Float = 0f,
     val downbeatRoot: String? = null,
@@ -58,6 +60,7 @@ data class SongPhraseState(
     val confidence: Float = 0f,
     val currentBarIndex: Int = 0,
     val locked: Boolean = false,
+    val sectionLabel: String = "",
     val progressionSize: Int = 0,
     val slotsPerBar: Int = 1,
     val downbeatGuess: Int = 0,
@@ -70,6 +73,7 @@ data class SongPhraseState(
 
     fun compactLabel(): String {
         val sourceLabel = when {
+            locked && sectionLabel.isNotBlank() -> sectionLabel
             locked -> "Lock"
             source.isNotBlank() -> source
             else -> "Learn"
@@ -98,6 +102,7 @@ fun AudioAnalysisState.songPhraseState(): SongPhraseState {
         confidence = phraseConfidence,
         currentBarIndex = phraseBarIndex,
         locked = phraseLocked,
+        sectionLabel = phraseSectionLabel,
         progressionSize = chordProgression.size,
         downbeatGuess = downbeatGuess,
         downbeatConfidence = downbeatConfidence,

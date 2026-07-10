@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -90,7 +91,7 @@ import kotlin.random.Random
 internal fun FidgetToyPage() {
     val context = LocalContext.current
     val savedSettings = remember(context) { context.loadFidgetSettings() }
-    var toyIndex by remember { mutableIntStateOf(0) }
+    var toyIndex by remember { mutableIntStateOf(FIDGET_SPINNER_INDEX) }
     var rotationDegrees by remember { mutableFloatStateOf(0f) }
     var spinVelocityDegreesPerSecond by remember { mutableFloatStateOf(0f) }
     var touchPulse by remember { mutableFloatStateOf(0f) }
@@ -125,6 +126,7 @@ internal fun FidgetToyPage() {
     var worryStoneRub by remember { mutableFloatStateOf(0f) }
     var keyClickMask by remember { mutableIntStateOf(0) }
     var zenTracePoints by remember { mutableStateOf(emptyList<Offset>()) }
+    var activeBeatPad by remember { mutableIntStateOf(-1) }
     var slingshotPosition by remember { mutableStateOf(Offset.Zero) }
     var slingshotVelocity by remember { mutableStateOf(Offset.Zero) }
     var slingshotPulling by remember { mutableStateOf(false) }
@@ -153,6 +155,7 @@ internal fun FidgetToyPage() {
     val donationBadge = fidgetDonationBadgeFor(donationCounts)
     val pinnedToyIds = remember(pinnedToyIdsCsv) { pinnedToyIdsCsv.toPinnedToyIds() }
     val fidgetPageOrder = remember(pinnedToyIds) { fidgetPageOrderFor(pinnedToyIds) }
+    val currentToyName = fidgetToyNameFor(toyIndex)
     val nextRewardCount = nextFibonacciTarget(fidgetCount)
     val cpuUsagePercent = rememberFidgetCpuUsagePercent(enabled = cpuPercentVisible)
     val feedbackController = remember(context) {
@@ -204,6 +207,13 @@ internal fun FidgetToyPage() {
         }
     }
 
+    LaunchedEffect(activeBeatPad) {
+        if (activeBeatPad >= 0) {
+            delay(120L)
+            activeBeatPad = -1
+        }
+    }
+
     fun triggerFeedback(countFidget: Boolean = true) {
         if (countFidget) {
             val nextCount = fidgetCount + 1
@@ -217,6 +227,21 @@ internal fun FidgetToyPage() {
             hapticEnabled = hapticFeedbackEnabled,
             soundEnabled = soundFeedbackEnabled,
             beatSoundMode = feedbackSoundMode,
+            accentIntensityMode = accentIntensityMode,
+        )
+    }
+
+    fun triggerBeatPad(index: Int) {
+        val nextCount = fidgetCount + 1
+        fidgetCount = nextCount
+        if (isFibonacciReward(nextCount)) {
+            rewardPulse = 1f
+            touchPulse = 1f
+        }
+        feedbackController.playBeatPad(
+            padIndex = index,
+            hapticEnabled = hapticFeedbackEnabled,
+            soundEnabled = soundFeedbackEnabled,
             accentIntensityMode = accentIntensityMode,
         )
     }
@@ -338,10 +363,20 @@ internal fun FidgetToyPage() {
             )
     ) {
         val compactWatch = minOf(maxWidth, maxHeight) <= 205.dp
+        val phoneLayout = maxHeight >= 360.dp || maxWidth >= 360.dp
+        val phoneLandscape = phoneLayout && maxWidth > maxHeight
         val navButtonWidth = if (compactWatch) 30.dp else 38.dp
         val navButtonHeight = if (compactWatch) 54.dp else 64.dp
         val navButtonFontSize = if (compactWatch) 42.sp else 50.sp
-        val navButtonPadding = if (compactWatch) 4.dp else 8.dp
+        val navButtonPadding = when {
+            phoneLandscape -> 54.dp
+            compactWatch -> 4.dp
+            else -> 8.dp
+        }
+        val bottomContentPadding = 7.dp
+        val bottomControlsOffsetY = if (phoneLayout && !phoneLandscape) (-82).dp else 0.dp
+        val pageHorizontalPadding = if (phoneLandscape) 62.dp else 14.dp
+        val pageTopPadding = if (phoneLandscape) 18.dp else 30.dp
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             val rewardAlpha = (0.16f + rewardPulse * 0.58f).coerceIn(0f, 0.74f)
@@ -397,12 +432,19 @@ internal fun FidgetToyPage() {
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 14.dp, top = 30.dp, end = 14.dp, bottom = 7.dp),
+                .padding(
+                    start = pageHorizontalPadding,
+                    top = pageTopPadding,
+                    end = pageHorizontalPadding,
+                    bottom = bottomContentPadding,
+                ),
         ) {
             if (toyIndex != FIDGET_MENU_INDEX) {
                 FidgetTitleWithDonationBadge(
                     title = fidgetText.title,
+                    toyName = currentToyName,
                     badge = donationBadge,
+                    accentColor = mainColor,
                 )
             } else {
                 Spacer(modifier = Modifier.height(2.dp))
@@ -661,6 +703,18 @@ internal fun FidgetToyPage() {
                                     zenTracePoints = emptyList()
                                 },
                             )
+                        } else if (toyIndex == FIDGET_BEAT_MACHINE_INDEX) {
+                            BeatMachineFidgetToy(
+                                activePad = activeBeatPad,
+                                accentColor = mainColor,
+                                accentColorArgb = mainColorArgb,
+                                onPadPress = { index ->
+                                    activeBeatPad = index
+                                    touchPulse = 1f
+                                    rewardPulse = rewardPulse.coerceAtLeast(0.48f)
+                                    triggerBeatPad(index)
+                                },
+                            )
                         } else if (toyIndex == FIDGET_SLINGSHOT_INDEX) {
                             SlingshotFidgetToy(
                                 ballPosition = slingshotPosition,
@@ -793,24 +847,40 @@ internal fun FidgetToyPage() {
                 }
             }
 
-            if (toyIndex != FIDGET_MENU_INDEX) {
+            if (toyIndex != FIDGET_MENU_INDEX && toyIndex != FIDGET_WALL_INDEX) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(43.dp),
+                        .height(43.dp)
+                        .offset(y = bottomControlsOffsetY),
                 ) {
-                    FidgetNavButton(
-                        text = fidgetText.menu,
-                        wide = true,
-                        accentColor = mainColor,
-                        accentColorArgb = mainColorArgb,
-                        onClick = {
-                            triggerFeedback(countFidget = false)
-                            toyIndex = FIDGET_MENU_INDEX
-                        },
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        FidgetNavButton(
+                            text = fidgetText.toys,
+                            wide = true,
+                            accentColor = mainColor,
+                            accentColorArgb = mainColorArgb,
+                            onClick = {
+                                triggerFeedback(countFidget = false)
+                                toyIndex = FIDGET_WALL_INDEX
+                            },
+                        )
+                        FidgetNavButton(
+                            text = fidgetText.menu,
+                            wide = true,
+                            accentColor = mainColor,
+                            accentColorArgb = mainColorArgb,
+                            onClick = {
+                                triggerFeedback(countFidget = false)
+                                toyIndex = FIDGET_MENU_INDEX
+                            },
+                        )
+                    }
                     Text(
                         text = fidgetText.rewardLine(fidgetCount, nextRewardCount),
                         color = ringColor.copy(alpha = 0.88f),
@@ -932,7 +1002,8 @@ private const val FIDGET_GEAR_JAM_INDEX = 14
 private const val FIDGET_WORRY_STONE_INDEX = 15
 private const val FIDGET_KEY_CLICKS_INDEX = 16
 private const val FIDGET_ZEN_TRACE_INDEX = 17
-private const val FIDGET_MENU_INDEX = 18
+private const val FIDGET_BEAT_MACHINE_INDEX = 18
+private const val FIDGET_MENU_INDEX = 19
 private const val SWITCH_MAZE_COLUMNS = 4
 private const val SWITCH_MAZE_ROWS = 4
 private const val SWITCH_MAZE_CELL_COUNT = SWITCH_MAZE_COLUMNS * SWITCH_MAZE_ROWS
@@ -1061,6 +1132,7 @@ private val FIDGET_TOY_INFOS = listOf(
     FidgetToyInfo(FIDGET_WORRY_STONE_INDEX, "Worry Stone", "Soft"),
     FidgetToyInfo(FIDGET_KEY_CLICKS_INDEX, "Key Clicks", "Click"),
     FidgetToyInfo(FIDGET_ZEN_TRACE_INDEX, "Zen Trace", "Flow"),
+    FidgetToyInfo(FIDGET_BEAT_MACHINE_INDEX, "Beat Machine", "Sound"),
 )
 
 private data class FidgetText(
@@ -1208,13 +1280,15 @@ private fun fidgetDonationBadgeFor(donationCounts: Map<String, Int>): FidgetDona
 @Composable
 private fun FidgetTitleWithDonationBadge(
     title: String,
+    toyName: String,
     badge: FidgetDonationBadge?,
+    accentColor: Color,
 ) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .fillMaxWidth()
-            .height(20.dp),
+            .height(34.dp),
     ) {
         Text(
             text = title,
@@ -1223,14 +1297,28 @@ private fun FidgetTitleWithDonationBadge(
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
             maxLines = 1,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter),
+        )
+
+        Text(
+            text = toyName,
+            color = accentColor,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Black,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter),
         )
 
         if (badge != null) {
             FidgetDonationBadgePill(
                 badge = badge,
                 modifier = Modifier
-                    .align(Alignment.Center)
+                    .align(Alignment.TopCenter)
                     .offset(x = 72.dp),
             )
         }
@@ -1309,19 +1397,44 @@ private fun FidgetMenuPage(
         contentAlignment = Alignment.TopCenter,
     ) {
         val watchSClass = minOf(maxWidth, maxHeight) <= 200.dp
-        val horizontalPadding = if (watchSClass) 14.dp else 18.dp
-        val topPadding = if (watchSClass) 8.dp else 10.dp
+        val phoneLayout = maxHeight >= 360.dp || maxWidth >= 360.dp
+        val horizontalPadding = if (phoneLayout) 24.dp else if (watchSClass) 14.dp else 18.dp
+        val topPadding = if (phoneLayout) 14.dp else if (watchSClass) 8.dp else 10.dp
+        val bottomPadding = if (phoneLayout) 140.dp else 10.dp
         val sectionSpacing = if (watchSClass) 7.dp else 9.dp
         val tightSpacing = if (watchSClass) 4.dp else 5.dp
         val labelFontSize = if (watchSClass) 9.sp else 10.sp
         val scrollBarHeight = if (watchSClass) 104.dp else 132.dp
+        val doneButtonText = if (phoneLayout) {
+            when (appLanguage) {
+                AppLanguage.English -> "Save"
+                AppLanguage.Spanish -> "Guardar"
+            }
+        } else {
+            text.done
+        }
+        val doneButtonModifier = if (phoneLayout) {
+            Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 76.dp)
+                .width(118.dp)
+                .height(42.dp)
+        } else {
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 2.dp, end = 7.dp)
+                .rotate(38f)
+                .width(58.dp)
+                .height(24.dp)
+        }
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(settingsScrollState)
-                .padding(start = horizontalPadding, top = topPadding, end = horizontalPadding, bottom = 10.dp),
+                .padding(start = horizontalPadding, top = topPadding, end = horizontalPadding, bottom = bottomPadding),
         ) {
             FidgetMenuSectionTitle(text.language, labelFontSize, accentColor)
             Row(
@@ -1535,14 +1648,9 @@ private fun FidgetMenuPage(
         }
 
         FidgetThemeButton(
-            text = text.done,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 2.dp, end = 7.dp)
-                .rotate(38f)
-                .width(58.dp)
-                .height(24.dp),
-            fontSize = 9.sp,
+            text = doneButtonText,
+            modifier = doneButtonModifier,
+            fontSize = if (phoneLayout) 15.sp else 9.sp,
             selected = true,
             prominent = true,
             accentColor = accentColor,
@@ -2247,7 +2355,15 @@ private fun fidgetPageOrderFor(pinnedToyIds: List<Int>): List<Int> {
     val unpinnedToyIds = FIDGET_TOY_INFOS
         .map { it.id }
         .filterNot { toyId -> toyId in pinnedSet }
-    return listOf(FIDGET_WALL_INDEX) + pinnedToyIds + unpinnedToyIds
+    return pinnedToyIds + unpinnedToyIds
+}
+
+private fun fidgetToyNameFor(toyIndex: Int): String {
+    return when (toyIndex) {
+        FIDGET_WALL_INDEX -> "Toy Wall"
+        FIDGET_MENU_INDEX -> "Menu"
+        else -> FIDGET_TOY_INFOS.firstOrNull { toy -> toy.id == toyIndex }?.name ?: "Fidget"
+    }
 }
 
 private fun Int.wrapFidgetIndex(size: Int): Int {
@@ -3464,6 +3580,114 @@ private fun KeyClicksFidgetToy(
 }
 
 @Composable
+private fun BeatMachineFidgetToy(
+    activePad: Int,
+    accentColor: Color,
+    accentColorArgb: Int,
+    onPadPress: (Int) -> Unit,
+) {
+    val padLabels = listOf("Kick", "Snr", "Hat", "Tom", "Clap", "Bell")
+    Box(
+        modifier = Modifier
+            .size(118.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(
+                        accentColor.copy(alpha = if (activePad >= 0) 0.3f else 0.12f),
+                        Color.White.copy(alpha = 0.05f),
+                        Color.Black.copy(alpha = 0.28f),
+                    ),
+                ),
+            )
+            .border(1.dp, accentColor.copy(alpha = 0.72f), RoundedCornerShape(16.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            if (activePad >= 0) {
+                drawCircle(
+                    color = Color(0xFFFFC857).copy(alpha = 0.24f),
+                    radius = size.minDimension * 0.48f,
+                    center = center,
+                    style = Stroke(width = 7.dp.toPx()),
+                )
+            }
+            repeat(4) { index ->
+                val y = 18.dp.toPx() + index * 27.dp.toPx()
+                drawLine(
+                    color = accentColor.copy(alpha = 0.11f),
+                    start = Offset(16.dp.toPx(), y),
+                    end = Offset(size.width - 16.dp.toPx(), y),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+        }
+
+        Column(
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            repeat(2) { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    repeat(3) { column ->
+                        val index = row * 3 + column
+                        val active = activePad == index
+                        val padColor = listOf(
+                            Color(0xFFFFC857),
+                            Color(0xFFEF476F),
+                            Color(0xFF56F1C8),
+                            Color(0xFF8D6BFF),
+                            Color(0xFFFF7A2F),
+                            accentColor,
+                        )[index]
+                        Box(
+                            modifier = Modifier
+                                .size(width = 31.dp, height = 33.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            Color.White.copy(alpha = if (active) 0.55f else 0.2f),
+                                            padColor.copy(alpha = if (active) 0.95f else 0.64f),
+                                            Color.Black.copy(alpha = if (active) 0.08f else 0.32f),
+                                        ),
+                                    ),
+                                )
+                                .border(
+                                    width = if (active) 2.dp else 1.dp,
+                                    color = if (active) Color.White.copy(alpha = 0.8f) else padColor.copy(alpha = 0.8f),
+                                    shape = RoundedCornerShape(8.dp),
+                                )
+                                .clickable { onPadPress(index) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = padLabels[index],
+                                color = if (active) readableTextColorFor(accentColorArgb) else Color.White,
+                                fontSize = 7.sp,
+                                fontWeight = FontWeight.Black,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Text(
+            text = "FLASH",
+            color = Color(0xFFFFC857).copy(alpha = if (activePad >= 0) 0.92f else 0.42f),
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 3.dp),
+        )
+    }
+}
+
+@Composable
 private fun ZenTraceFidgetToy(
     tracePoints: List<Offset>,
     accentColor: Color,
@@ -3984,7 +4208,7 @@ private class FidgetFeedbackController(context: Context) {
     }.getOrNull()
     private val clickTone = ToneGenerator(AudioManager.STREAM_MUSIC, 54)
     private val soundPool = SoundPool.Builder()
-        .setMaxStreams(3)
+        .setMaxStreams(8)
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -3995,6 +4219,7 @@ private class FidgetFeedbackController(context: Context) {
     private val loadedSamples = mutableSetOf<Int>()
     private val woodSoundId: Int
     private val bellSoundId: Int
+    private val beatPadSoundIds: IntArray
 
     init {
         soundPool.setOnLoadCompleteListener { _, sampleId, status ->
@@ -4004,6 +4229,14 @@ private class FidgetFeedbackController(context: Context) {
         }
         woodSoundId = soundPool.load(context, R.raw.wood_mid, 1)
         bellSoundId = soundPool.load(context, R.raw.bell_mid, 1)
+        beatPadSoundIds = intArrayOf(
+            soundPool.load(context, R.raw.beat_kick, 1),
+            soundPool.load(context, R.raw.beat_snare, 1),
+            soundPool.load(context, R.raw.beat_hat, 1),
+            soundPool.load(context, R.raw.beat_tom, 1),
+            soundPool.load(context, R.raw.beat_clap, 1),
+            soundPool.load(context, R.raw.beat_bell, 1),
+        )
     }
 
     fun play(
@@ -4031,6 +4264,29 @@ private class FidgetFeedbackController(context: Context) {
             BeatSoundMode.Wood -> playSample(woodSoundId, accentIntensityMode)
             BeatSoundMode.Bell -> playSample(bellSoundId, accentIntensityMode)
         }
+    }
+
+    fun playBeatPad(
+        padIndex: Int,
+        hapticEnabled: Boolean,
+        soundEnabled: Boolean,
+        accentIntensityMode: AccentIntensityMode,
+    ) {
+        if (hapticEnabled) {
+            vibrator?.vibrate(
+                VibrationEffect.createOneShot(
+                    (accentIntensityMode.feedbackVibrationMs() * 0.72f).roundToInt().coerceAtLeast(6).toLong(),
+                    accentIntensityMode.feedbackVibrationAmplitude(),
+                ),
+            )
+        }
+
+        if (!soundEnabled) return
+
+        val soundId = beatPadSoundIds.getOrElse(padIndex.wrapFidgetIndex(beatPadSoundIds.size)) {
+            beatPadSoundIds.first()
+        }
+        playSample(soundId, accentIntensityMode)
     }
 
     fun release() {

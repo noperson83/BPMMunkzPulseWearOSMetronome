@@ -59,6 +59,7 @@ fun FftLabPage(
         val range = selectedProfile.audioListenRangeFor(selectedReaderMode)
         val liveChord = audioAnalysisState.likelyChords.firstOrNull()
         val progressionChords = audioAnalysisState.chordProgression.take(16)
+        val harmonyProgression = audioAnalysisState.harmonyProgression.take(progressionChords.size)
         val phraseState = audioAnalysisState.songPhraseState()
         val meterText = audioAnalysisState.tempoMeterLabel.ifBlank { "${audioAnalysisState.tempoMeter}/4" }
         val musicalTempoText = audioAnalysisState.musicalTempoBpm?.toString() ?: "--"
@@ -132,6 +133,7 @@ fun FftLabPage(
                     )
                     PhraseChordOverlay(
                         chords = progressionChords,
+                        harmony = harmonyProgression,
                         keyName = audioAnalysisState.guessedKey,
                         phraseBarIndex = phraseState.currentBarIndex,
                         phraseLocked = phraseState.locked,
@@ -197,8 +199,26 @@ fun FftLabPage(
                 text = buildAnnotatedString {
                     append(feelText)
                     append("  ")
+                    append("Chord ")
+                    if (liveChord == null) {
+                        append("--")
+                    } else {
+                        pushStyle(SpanStyle(color = liveChord.chordEmotionColor()))
+                        append(liveChord)
+                        pop()
+                        if (audioAnalysisState.chordConfidence > 0f) {
+                            append(" ")
+                            append("${(audioAnalysisState.chordConfidence * 100f).roundToInt()}%")
+                        }
+                        audioAnalysisState.alternateChord?.let { alternate ->
+                            append("/")
+                            pushStyle(SpanStyle(color = alternate.chordEmotionColor().copy(alpha = 0.68f)))
+                            append(alternate)
+                            pop()
+                        }
+                    }
                     if (progressionChords.isNotEmpty()) {
-                        append("Prog ")
+                        append("  Prog ")
                         append(phraseText)
                         append(" ")
                         progressionChords.forEachIndexed { index, chord ->
@@ -206,25 +226,6 @@ fun FftLabPage(
                             pushStyle(SpanStyle(color = chord.chordEmotionColor()))
                             append(chord)
                             pop()
-                        }
-                    } else {
-                        append("Chord ")
-                        if (liveChord == null) {
-                            append("--")
-                        } else {
-                            pushStyle(SpanStyle(color = liveChord.chordEmotionColor()))
-                            append(liveChord)
-                            pop()
-                            if (audioAnalysisState.chordConfidence > 0f) {
-                                append(" ")
-                                append("${(audioAnalysisState.chordConfidence * 100f).roundToInt()}%")
-                            }
-                            audioAnalysisState.alternateChord?.let { alternate ->
-                                append(" / ")
-                                pushStyle(SpanStyle(color = alternate.chordEmotionColor().copy(alpha = 0.68f)))
-                                append(alternate)
-                                pop()
-                            }
                         }
                     }
                 },
@@ -241,6 +242,7 @@ fun FftLabPage(
 @Composable
 private fun PhraseChordOverlay(
     chords: List<String>,
+    harmony: List<String>,
     keyName: String?,
     phraseBarIndex: Int,
     phraseLocked: Boolean,
@@ -275,6 +277,7 @@ private fun PhraseChordOverlay(
                     val isFirst = rowIndex == 0 && index == 0
                     PhraseChordCell(
                         chord = chord,
+                        harmony = harmony.getOrNull(absoluteIndex - 1).orEmpty(),
                         keyName = keyName,
                         isFirst = isFirst,
                         isActive = isActive,
@@ -291,6 +294,7 @@ private fun PhraseChordOverlay(
 @Composable
 private fun PhraseChordCell(
     chord: String,
+    harmony: String,
     keyName: String?,
     isFirst: Boolean,
     isActive: Boolean,
@@ -332,7 +336,7 @@ private fun PhraseChordCell(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        val function = chord.harmonicFunctionIn(keyName)
+        val function = harmony.ifBlank { functionalHarmonyRoman(keyName, chord) }
         if (function.isNotBlank() && !uncertain) {
             Text(
                 text = function,
@@ -464,54 +468,6 @@ private fun oneDecimal(value: Float): String {
     return "${roundedTenths / 10}.${kotlin.math.abs(roundedTenths % 10)}"
 }
 
-private val FftFunctionNoteClasses = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
-private val FftFlatAliases = mapOf(
-    "Db" to "C#",
-    "Eb" to "D#",
-    "Gb" to "F#",
-    "Ab" to "G#",
-    "Bb" to "A#",
-)
-
-private fun String.harmonicFunctionIn(keyName: String?): String {
-    val keyRoot = keyName.noteRootIndex() ?: return ""
-    val chordRoot = noteRootIndex() ?: return ""
-    val interval = (chordRoot - keyRoot).floorMod(FftFunctionNoteClasses.size)
-    val keyIsMinor = keyName.containsMinorContext()
-    val roman = if (keyIsMinor) {
-        when (interval) {
-            0 -> if (containsDominantColor()) "I7" else "i"
-            1 -> "bII"
-            2 -> "II"
-            3 -> "bIII"
-            4 -> "III"
-            5 -> if (containsMinorChord()) "iv" else "IV"
-            6 -> "bV"
-            7 -> if (containsDominantColor()) "V7" else "v"
-            8 -> "bVI"
-            9 -> "VI"
-            10 -> "bVII"
-            else -> "VII"
-        }
-    } else {
-        when (interval) {
-            0 -> if (containsMinorChord()) "i" else "I"
-            1 -> "bII"
-            2 -> if (containsMinorChord()) "ii" else "II"
-            3 -> "bIII"
-            4 -> if (containsMinorChord()) "iii" else "III"
-            5 -> if (containsMinorChord()) "iv" else "IV"
-            6 -> "#IV"
-            7 -> if (containsDominantColor()) "V7" else "V"
-            8 -> "bVI"
-            9 -> if (containsMinorChord()) "vi" else "VI"
-            10 -> "bVII"
-            else -> "VII"
-        }
-    }
-    return if (containsAlteredColor()) "${roman}alt" else roman
-}
-
 private fun String?.chordEmotionColor(): Color {
     val chord = this ?: return Color.White.copy(alpha = 0.74f)
     return when {
@@ -523,18 +479,6 @@ private fun String?.chordEmotionColor(): Color {
         chord.containsMinorChord() -> Color(0xFF6EA8FF)
         else -> Color(0xFF9BE06D)
     }
-}
-
-private fun String?.noteRootIndex(): Int? {
-    val text = this ?: return null
-    val root = text.take(2).takeIf { it.length == 2 && (it[1] == '#' || it[1] == 'b') } ?: text.take(1)
-    val normalizedRoot = FftFlatAliases[root] ?: root
-    return FftFunctionNoteClasses.indexOf(normalizedRoot).takeIf { it >= 0 }
-}
-
-private fun String?.containsMinorContext(): Boolean {
-    val text = this ?: return false
-    return text.contains("m") || text.contains("blues") || text.contains(" Dor")
 }
 
 private fun String.containsMinorChord(): Boolean {
@@ -550,8 +494,4 @@ private fun String.containsAlteredColor(): Boolean {
     val rootLength = if (length >= 2 && (this[1] == '#' || this[1] == 'b')) 2 else 1
     val suffix = drop(rootLength)
     return suffix.contains("#") || suffix.contains("b9") || suffix.contains("b13") || suffix.contains("b5")
-}
-
-private fun Int.floorMod(divisor: Int): Int {
-    return ((this % divisor) + divisor) % divisor
 }

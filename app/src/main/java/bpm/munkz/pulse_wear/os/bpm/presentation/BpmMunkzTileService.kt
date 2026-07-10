@@ -152,7 +152,7 @@ private fun tileLogoResIdForPackage(packageName: String): Int {
         packageName.endsWith(".pro") -> R.drawable.bpm_munkz_app_logo_pro
         packageName.endsWith(".rhythm") -> R.drawable.bpm_munkz_app_logo_rhythm
         packageName.endsWith(".hearnoevil") -> R.drawable.hear_no_evil_logo
-        packageName.endsWith(".fidgettoy") -> R.drawable.munkz_fidget_toy_logo
+        packageName.contains(".fidgettoy") -> R.drawable.munkz_fidget_toy_logo
         else -> R.drawable.bpm_munkz_app_logo_edition
     }
 }

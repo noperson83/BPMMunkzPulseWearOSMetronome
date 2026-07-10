@@ -42,6 +42,48 @@ android {
             versionCode = 6
             buildConfigField("String", "APP_EDITION", "\"bpm\"")
         }
+        create("phonebpm") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse.phone.metronome"
+            versionCode = 1
+            versionNameSuffix = "-phone"
+            buildConfigField("String", "APP_EDITION", "\"phonebpm\"")
+        }
+        create("phonetune") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse.phone.tuner"
+            versionCode = 1
+            versionNameSuffix = "-phone-tune"
+            buildConfigField("String", "APP_EDITION", "\"phonetune\"")
+        }
+        create("phonerhythm") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse.phone.rhythm"
+            versionCode = 1
+            versionNameSuffix = "-phone-rhythm"
+            buildConfigField("String", "APP_EDITION", "\"phonerhythm\"")
+        }
+        create("phoneplaylist") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse.phone.playlist"
+            versionCode = 1
+            versionNameSuffix = "-phone-playlist"
+            buildConfigField("String", "APP_EDITION", "\"phoneplaylist\"")
+        }
+        create("phonepro") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse.phone.pro"
+            versionCode = 1
+            versionNameSuffix = "-phone-pro"
+            buildConfigField("String", "APP_EDITION", "\"phonepro\"")
+        }
+        create("phonebeatmachine") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse.phone.beatmachine"
+            versionCode = 1
+            versionNameSuffix = "-phone-beatmachine"
+            buildConfigField("String", "APP_EDITION", "\"phonebeatmachine\"")
+        }
         create("tune") {
             dimension = "edition"
             applicationId = "bpm.munkz.pulse_wear.os.tuner"
@@ -75,6 +117,13 @@ android {
             versionNameSuffix = "-hearnoevil"
             buildConfigField("String", "APP_EDITION", "\"hearnoevil\"")
         }
+        create("beatmachine") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.pulse_wear.os.beatmachine"
+            versionCode = 1
+            versionNameSuffix = "-beatmachine"
+            buildConfigField("String", "APP_EDITION", "\"beatmachine\"")
+        }
         create("fidgettoy") {
             dimension = "edition"
             applicationId = "bpm.munkz.pulse_wear.os.fidgettoy"
@@ -82,6 +131,38 @@ android {
             versionName = "1.2"
             versionNameSuffix = "-fidgettoy"
             buildConfigField("String", "APP_EDITION", "\"fidgettoy\"")
+        }
+        create("fidgetphone") {
+            dimension = "edition"
+            applicationId = "bpm.munkz.fidgettoy.phone"
+            versionCode = 1
+            versionName = "1.0"
+            versionNameSuffix = "-fidgetphone"
+            buildConfigField("String", "APP_EDITION", "\"fidgettoy\"")
+        }
+    }
+
+    sourceSets {
+        getByName("phonebpm") {
+            res.srcDir("src/bpm/res")
+        }
+        getByName("phonetune") {
+            res.srcDir("src/tune/res")
+        }
+        getByName("phonerhythm") {
+            res.srcDir("src/rhythm/res")
+        }
+        getByName("phoneplaylist") {
+            res.srcDir("src/playlist/res")
+        }
+        getByName("phonepro") {
+            res.srcDir("src/pro/res")
+        }
+        getByName("phonebeatmachine") {
+            res.srcDir("src/beatmachine/res")
+        }
+        getByName("fidgetphone") {
+            res.srcDir("src/fidgettoy/res")
         }
     }
 

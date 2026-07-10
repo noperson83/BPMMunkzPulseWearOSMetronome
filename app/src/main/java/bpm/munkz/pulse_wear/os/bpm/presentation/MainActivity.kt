@@ -431,10 +431,20 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         openSpectrumRequest = intent.shouldOpenSpectrum()
         setContent {
-            WearApp(
-                openSpectrumRequest = openSpectrumRequest,
-                onOpenSpectrumRequestConsumed = { openSpectrumRequest = false },
-            )
+            when (BuildConfig.APP_EDITION) {
+                "phonebpm" -> PhoneMetronomeApp()
+                "phonetune" -> PhoneTunerApp()
+                "phonerhythm" -> PhoneRhythmApp()
+                "phoneplaylist" -> PhonePlaylistApp()
+                "phonepro" -> PhoneProApp()
+                "phonebeatmachine" -> PhoneBeatMachineApp()
+                else -> {
+                    WearApp(
+                        openSpectrumRequest = openSpectrumRequest,
+                        onOpenSpectrumRequestConsumed = { openSpectrumRequest = false },
+                    )
+                }
+            }
         }
     }
 
@@ -524,7 +534,8 @@ private fun launchLogoResIdForPackage(packageName: String): Int {
         packageName.endsWith(".playlist") -> R.drawable.bpm_munkz_app_logo_playlist
         packageName.endsWith(".pro") -> R.drawable.bpm_munkz_app_logo_pro
         packageName.endsWith(".hearnoevil") -> R.drawable.hear_no_evil_logo
-        packageName.endsWith(".fidgettoy") -> R.drawable.munkz_fidget_toy_logo
+        packageName.endsWith(".beatmachine") -> R.drawable.bpm_munkz_beat_machine_logo
+        packageName.contains(".fidgettoy") -> R.drawable.munkz_fidget_toy_logo
         else -> R.drawable.bpm_munkz_app_logo_edition
     }
 }
@@ -803,7 +814,9 @@ fun BeatPulseScreen(
     ) { granted ->
         notificationPermissionGranted = granted
     }
-    val shouldRequestNotificationPermission = !appFeatures.isFidgetToyOnly && !appFeatures.isHearNoEvilOnly
+    val shouldRequestNotificationPermission = !appFeatures.isFidgetToyOnly &&
+        !appFeatures.isHearNoEvilOnly &&
+        !appFeatures.isBeatMachineOnly
     LaunchedEffect(shouldRequestNotificationPermission, notificationPermissionGranted, isPreview) {
         if (
             !isPreview &&
@@ -1701,21 +1714,40 @@ fun BeatPulseScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            if (appFeatures.isFidgetToyOnly) {
+            if (appFeatures.isBeatMachineOnly) {
+                BeatMachinePage()
+            } else if (appFeatures.isFidgetToyOnly) {
                 FidgetToyPage()
             } else if (appFeatures.isHearNoEvilOnly) {
-                FftLabPage(
-                    appText = appText,
-                    title = "Hear No Evil",
-                    audioAnalysisState = audioAnalysisState,
-                    selectedProfile = tunerListenProfile,
-                    selectedReaderMode = SpectrumReaderMode.Song,
-                    a4ReferenceHz = a4ReferenceHz,
-                    micPermissionGranted = micPermissionGranted,
-                    onRequestMicPermission = {
-                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    },
-                )
+                val hearNoEvilPagerState = rememberPagerState(pageCount = { 2 })
+                HorizontalPager(
+                    state = hearNoEvilPagerState,
+                    modifier = Modifier.fillMaxSize(),
+                ) { page ->
+                    when (page) {
+                        0 -> FftLabPage(
+                            appText = appText,
+                            title = "Hear No Evil",
+                            audioAnalysisState = audioAnalysisState,
+                            selectedProfile = tunerListenProfile,
+                            selectedReaderMode = SpectrumReaderMode.Song,
+                            a4ReferenceHz = a4ReferenceHz,
+                            micPermissionGranted = micPermissionGranted,
+                            onRequestMicPermission = {
+                                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                        )
+                        else -> CascadingFftPage(
+                            appText = appText,
+                            title = "FFT Waterfall",
+                            audioAnalysisState = audioAnalysisState,
+                            micPermissionGranted = micPermissionGranted,
+                            onRequestMicPermission = {
+                                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                        )
+                    }
+                }
             } else if (appFeatures.isTuneOnly) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     when (tunePageIndex) {

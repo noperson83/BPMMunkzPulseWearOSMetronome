@@ -38,6 +38,7 @@ internal data class PlaylistSong(
     val accentIntensityMode: AccentIntensityMode,
     val musicalKey: String,
     val note: String,
+    val beatMachineSequenceMasks: List<Int>? = null,
 )
 
 internal data class SavedPlaylist(
@@ -195,6 +196,8 @@ internal fun Context.loadSavedPlaylists(): List<SavedPlaylist> {
                                 ),
                                 musicalKey = songObject.optString("musicalKey", "C"),
                                 note = songObject.optString("note", "Count in"),
+                                beatMachineSequenceMasks = songObject.optJSONArray("beatMachineSequenceMasks")
+                                    .toBeatMachineSequenceMasks(),
                             ),
                         )
                     }
@@ -229,7 +232,12 @@ internal fun Context.saveSavedPlaylists(playlists: List<SavedPlaylist>) {
                     .put("beatAccentTypes", song.beatAccentTypes.toJsonArray())
                     .put("accentIntensityMode", song.accentIntensityMode.persistedValue)
                     .put("musicalKey", song.musicalKey)
-                    .put("note", song.note),
+                    .put("note", song.note)
+                    .also { songObject ->
+                        song.beatMachineSequenceMasks?.let { masks ->
+                            songObject.put("beatMachineSequenceMasks", masks.toBeatMachineJsonArray())
+                        }
+                    },
             )
         }
 
@@ -244,6 +252,21 @@ internal fun Context.saveSavedPlaylists(playlists: List<SavedPlaylist>) {
         .edit {
             putString(PLAYLIST_LIBRARY_KEY, playlistArray.toString())
         }
+}
+
+private fun JSONArray?.toBeatMachineSequenceMasks(): List<Int>? {
+    if (this == null || length() == 0) return null
+    return List(8) { index ->
+        optInt(index, 0).coerceIn(0, 0xFFFF)
+    }
+}
+
+private fun List<Int>.toBeatMachineJsonArray(): JSONArray {
+    return JSONArray().also { array ->
+        take(8).forEach { mask ->
+            array.put(mask.coerceIn(0, 0xFFFF))
+        }
+    }
 }
 
 private fun JSONArray?.toBeatAccentTypes(

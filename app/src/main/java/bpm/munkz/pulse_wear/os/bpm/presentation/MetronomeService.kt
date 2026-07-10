@@ -29,6 +29,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.edit
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
+import bpm.munkz.pulse_wear.os.bpm.BuildConfig
 import bpm.munkz.pulse_wear.os.bpm.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -672,16 +673,18 @@ class MetronomeService : Service() {
                 ).build(),
             )
 
-        OngoingActivity.Builder(this, METRONOME_NOTIFICATION_ID, notificationBuilder)
-            .setStaticIcon(R.drawable.ic_metronome_notification)
-            .setTouchIntent(openAppIntent)
-            .setStatus(
-                Status.Builder()
-                    .addTemplate("${currentState.bpm} BPM")
-                    .build(),
-            )
-            .build()
-            .apply(this)
+        if (BuildConfig.APP_EDITION != "phonebpm") {
+            OngoingActivity.Builder(this, METRONOME_NOTIFICATION_ID, notificationBuilder)
+                .setStaticIcon(R.drawable.ic_metronome_notification)
+                .setTouchIntent(openAppIntent)
+                .setStatus(
+                    Status.Builder()
+                        .addTemplate("${currentState.bpm} BPM")
+                        .build(),
+                )
+                .build()
+                .apply(this)
+        }
 
         return notificationBuilder
             .build()
