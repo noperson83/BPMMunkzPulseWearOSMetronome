@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -140,6 +141,7 @@ internal fun FidgetToyPage() {
     var keepScreenOn by rememberSaveable { mutableStateOf(savedSettings.keepScreenOn) }
     var cpuPercentVisible by rememberSaveable { mutableStateOf(savedSettings.cpuPercentVisible) }
     var pinnedToyIdsCsv by rememberSaveable { mutableStateOf(savedSettings.pinnedToyIdsCsv) }
+    var wallResetToken by remember { mutableIntStateOf(0) }
     var reviewPopupOpen by remember { mutableStateOf(false) }
     var donationPopupOpen by remember { mutableStateOf(false) }
     var colorPopupOpen by remember { mutableStateOf(false) }
@@ -365,32 +367,56 @@ internal fun FidgetToyPage() {
         val compactWatch = minOf(maxWidth, maxHeight) <= 205.dp
         val phoneLayout = maxHeight >= 360.dp || maxWidth >= 360.dp
         val phoneLandscape = phoneLayout && maxWidth > maxHeight
-        val navButtonWidth = if (compactWatch) 30.dp else 38.dp
-        val navButtonHeight = if (compactWatch) 54.dp else 64.dp
-        val navButtonFontSize = if (compactWatch) 42.sp else 50.sp
+        val navButtonWidth = when {
+            compactWatch -> 28.dp
+            phoneLandscape -> 34.dp
+            else -> 36.dp
+        }
+        val navButtonHeight = when {
+            compactWatch -> 48.dp
+            phoneLandscape -> 52.dp
+            else -> 56.dp
+        }
+        val navButtonFontSize = if (compactWatch) 28.sp else 34.sp
         val navButtonPadding = when {
-            phoneLandscape -> 54.dp
-            compactWatch -> 4.dp
-            else -> 8.dp
+            phoneLandscape -> 44.dp
+            compactWatch -> 3.dp
+            else -> 6.dp
         }
         val bottomContentPadding = 7.dp
-        val bottomControlsOffsetY = if (phoneLayout && !phoneLandscape) (-82).dp else 0.dp
-        val pageHorizontalPadding = if (phoneLandscape) 62.dp else 14.dp
-        val pageTopPadding = if (phoneLandscape) 18.dp else 30.dp
+        val pageHorizontalPadding = if (phoneLandscape) 48.dp else 10.dp
+        val pageTopPadding = if (phoneLandscape) 10.dp else 16.dp
+        val stageOffsetY = when {
+            phoneLandscape -> 18.dp
+            phoneLayout -> 48.dp
+            else -> 0.dp
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (phoneLandscape) {
+                        Modifier.navigationBarsPadding()
+                    } else {
+                        Modifier
+                    },
+                ),
+        ) {
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             val rewardAlpha = (0.16f + rewardPulse * 0.58f).coerceIn(0f, 0.74f)
             drawCircle(
-                color = ringColor.copy(alpha = rewardAlpha),
-                radius = size.minDimension * (0.42f + rewardPulse * 0.04f),
+                color = ringColor.copy(alpha = rewardAlpha * 0.68f),
+                radius = size.minDimension * (0.34f + rewardPulse * 0.035f),
                 center = center,
-                style = Stroke(width = (3.dp + (rewardPulse * 6f).dp).toPx()),
+                style = Stroke(width = (2.dp + (rewardPulse * 4f).dp).toPx()),
             )
             drawCircle(
-                color = mainColor.copy(alpha = 0.11f + rewardPulse * 0.18f),
-                radius = size.minDimension * (0.29f + touchPulse * 0.035f + rewardPulse * 0.025f),
+                color = mainColor.copy(alpha = 0.08f + touchPulse * 0.12f),
+                radius = size.minDimension * (0.24f + touchPulse * 0.03f + rewardPulse * 0.02f),
                 center = center,
-                style = Stroke(width = 10.dp.toPx()),
+                style = Stroke(width = 7.dp.toPx()),
             )
         }
 
@@ -445,6 +471,7 @@ internal fun FidgetToyPage() {
                     toyName = currentToyName,
                     badge = donationBadge,
                     accentColor = mainColor,
+                    phoneLayout = phoneLayout,
                 )
             } else {
                 Spacer(modifier = Modifier.height(2.dp))
@@ -458,7 +485,29 @@ internal fun FidgetToyPage() {
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .weight(1f)
+                    .offset(
+                        y = if (toyIndex != FIDGET_MENU_INDEX && toyIndex != FIDGET_WALL_INDEX) {
+                            stageOffsetY
+                        } else {
+                            0.dp
+                        },
+                    )
+                    .then(
+                        if (toyIndex != FIDGET_MENU_INDEX && toyIndex != FIDGET_WALL_INDEX) {
+                            Modifier
+                                .padding(horizontal = 2.dp, vertical = 6.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Color.Black.copy(alpha = 0.16f))
+                                .border(
+                                    1.dp,
+                                    mainColor.copy(alpha = 0.18f),
+                                    RoundedCornerShape(20.dp),
+                                )
+                        } else {
+                            Modifier
+                        },
+                    ),
             ) {
                 when (toyIndex) {
                     FIDGET_WALL_INDEX -> {
@@ -466,6 +515,7 @@ internal fun FidgetToyPage() {
                             pinnedToyIds = pinnedToyIds,
                             accentColor = mainColor,
                             accentColorArgb = mainColorArgb,
+                            resetKey = wallResetToken,
                             onToySelected = { toyId ->
                                 triggerFeedback(countFidget = false)
                                 toyIndex = toyId
@@ -782,6 +832,12 @@ internal fun FidgetToyPage() {
                                     donationPopupOpen = true
                                 },
                                 onDoneClick = ::saveSettingsAndCloseMenu,
+                                onRewardReset = {
+                                    fidgetCount = 0
+                                    rewardPulse = 0f
+                                    touchPulse = 0f
+                                    triggerFeedback(countFidget = false)
+                                },
                                 onKeepScreenToggle = {
                                     keepScreenOn = !keepScreenOn
                                     triggerFeedback(countFidget = false)
@@ -853,8 +909,8 @@ internal fun FidgetToyPage() {
                     verticalArrangement = Arrangement.Center,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(43.dp)
-                        .offset(y = bottomControlsOffsetY),
+                        .navigationBarsPadding()
+                        .padding(bottom = 3.dp),
                 ) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
@@ -867,6 +923,7 @@ internal fun FidgetToyPage() {
                             accentColorArgb = mainColorArgb,
                             onClick = {
                                 triggerFeedback(countFidget = false)
+                                wallResetToken += 1
                                 toyIndex = FIDGET_WALL_INDEX
                             },
                         )
@@ -881,13 +938,10 @@ internal fun FidgetToyPage() {
                             },
                         )
                     }
-                    Text(
+                    FidgetRewardChip(
                         text = fidgetText.rewardLine(fidgetCount, nextRewardCount),
-                        color = ringColor.copy(alpha = 0.88f),
-                        fontSize = 8.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 2.dp),
+                        ringColor = ringColor,
+                        modifier = Modifier.padding(top = 3.dp),
                     )
                 }
             }
@@ -980,6 +1034,7 @@ internal fun FidgetToyPage() {
                     intensityPopupOpen = false
                 },
             )
+        }
         }
     }
 }
@@ -1151,6 +1206,8 @@ private data class FidgetText(
     val bell: String,
     val bigBeep: String,
     val watch: String,
+    val rewards: String,
+    val resetRewards: String,
     val keepOn: String,
     val keepOff: String,
     val theme: String,
@@ -1190,6 +1247,8 @@ private fun fidgetTextFor(language: AppLanguage): FidgetText {
             bell = "Bell",
             bigBeep = "Big Beep",
             watch = "Watch",
+            rewards = "Rewards",
+            resetRewards = "Reset Rewards",
             keepOn = "Keep On",
             keepOff = "Keep Off",
             theme = "Theme",
@@ -1226,6 +1285,8 @@ private fun fidgetTextFor(language: AppLanguage): FidgetText {
             bell = "Camp",
             bigBeep = "Beep Gran",
             watch = "Reloj",
+            rewards = "Premios",
+            resetRewards = "Reiniciar",
             keepOn = "Keep Si",
             keepOff = "Keep No",
             theme = "Tema",
@@ -1283,29 +1344,39 @@ private fun FidgetTitleWithDonationBadge(
     toyName: String,
     badge: FidgetDonationBadge?,
     accentColor: Color,
+    phoneLayout: Boolean,
 ) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .fillMaxWidth()
-            .height(34.dp),
+            .height(if (phoneLayout) 27.dp else 34.dp),
     ) {
-        Text(
-            text = title,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter),
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.align(Alignment.TopCenter),
         )
+        {
+            Image(
+                painter = painterResource(id = R.drawable.munkz_fidget_toy_logo),
+                contentDescription = null,
+                modifier = Modifier.size(if (phoneLayout) 15.dp else 18.dp),
+            )
+            Text(
+                text = title,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = if (phoneLayout) 10.sp else 12.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+        }
 
         Text(
             text = toyName,
             color = accentColor,
-            fontSize = 10.sp,
+            fontSize = if (phoneLayout) 8.sp else 9.sp,
             fontWeight = FontWeight.Black,
             textAlign = TextAlign.Center,
             maxLines = 1,
@@ -1319,7 +1390,7 @@ private fun FidgetTitleWithDonationBadge(
                 badge = badge,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .offset(x = 72.dp),
+                    .offset(x = if (phoneLayout) 64.dp else 72.dp),
             )
         }
     }
@@ -1374,6 +1445,7 @@ private fun FidgetMenuPage(
     onReviewClick: () -> Unit,
     onDonateClick: () -> Unit,
     onDoneClick: () -> Unit,
+    onRewardReset: () -> Unit,
     onKeepScreenToggle: () -> Unit,
     onCpuToggle: () -> Unit,
     onLanguageChoice: (AppLanguage) -> Unit,
@@ -1398,9 +1470,24 @@ private fun FidgetMenuPage(
     ) {
         val watchSClass = minOf(maxWidth, maxHeight) <= 200.dp
         val phoneLayout = maxHeight >= 360.dp || maxWidth >= 360.dp
-        val horizontalPadding = if (phoneLayout) 24.dp else if (watchSClass) 14.dp else 18.dp
-        val topPadding = if (phoneLayout) 14.dp else if (watchSClass) 8.dp else 10.dp
-        val bottomPadding = if (phoneLayout) 140.dp else 10.dp
+        val phoneLandscape = phoneLayout && maxWidth > maxHeight
+        val horizontalPadding = when {
+            phoneLandscape -> 46.dp
+            phoneLayout -> 24.dp
+            watchSClass -> 14.dp
+            else -> 18.dp
+        }
+        val topPadding = when {
+            phoneLandscape -> 42.dp
+            phoneLayout -> 14.dp
+            watchSClass -> 8.dp
+            else -> 10.dp
+        }
+        val bottomPadding = when {
+            phoneLandscape -> 36.dp
+            phoneLayout -> 140.dp
+            else -> 10.dp
+        }
         val sectionSpacing = if (watchSClass) 7.dp else 9.dp
         val tightSpacing = if (watchSClass) 4.dp else 5.dp
         val labelFontSize = if (watchSClass) 9.sp else 10.sp
@@ -1413,15 +1500,20 @@ private fun FidgetMenuPage(
         } else {
             text.done
         }
-        val doneButtonModifier = if (phoneLayout) {
-            Modifier
+        val doneButtonModifier = when {
+            phoneLandscape -> Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 3.dp, end = 12.dp)
+                .rotate(38f)
+                .width(88.dp)
+                .height(32.dp)
+            phoneLayout -> Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(bottom = 76.dp)
                 .width(118.dp)
                 .height(42.dp)
-        } else {
-            Modifier
+            else -> Modifier
                 .align(Alignment.TopEnd)
                 .padding(top = 2.dp, end = 7.dp)
                 .rotate(38f)
@@ -1605,6 +1697,17 @@ private fun FidgetMenuPage(
                 selectedColorArgb = ringColorArgb,
                 choices = PulseColorOptions,
                 onColorChoice = onRingColorChoice,
+            )
+
+            Spacer(modifier = Modifier.height(sectionSpacing))
+
+            FidgetMenuSectionTitle(text.rewards, labelFontSize, accentColor)
+            FidgetSettingsButton(
+                text = text.resetRewards,
+                selected = false,
+                accentColor = accentColor,
+                accentColorArgb = mainColorArgb,
+                onClick = onRewardReset,
             )
 
             Spacer(modifier = Modifier.height(sectionSpacing))
@@ -2154,6 +2257,7 @@ private fun FidgetSettingsButton(
         modifier = Modifier
             .width(
                 when {
+                    text.length > 12 -> 92.dp
                     text.length > 7 -> 64.dp
                     text.length > 5 -> 54.dp
                     else -> 44.dp
@@ -2572,6 +2676,7 @@ private fun FidgetSelectionWallPage(
     pinnedToyIds: List<Int>,
     accentColor: Color,
     accentColorArgb: Int,
+    resetKey: Int,
     onToySelected: (Int) -> Unit,
     onPinToggle: (Int) -> Unit,
 ) {
@@ -2579,63 +2684,60 @@ private fun FidgetSelectionWallPage(
     val pinnedSet = pinnedToyIds.toSet()
     val builtByStyle = FIDGET_TOY_INFOS.groupBy { it.style }
 
-    Box(
+    LaunchedEffect(resetKey) {
+        scrollState.scrollTo(0)
+    }
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 4.dp),
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(end = 5.dp, bottom = 4.dp),
+        val wallWidth = if (maxWidth > 620.dp) 620.dp else maxWidth
+
+        Box(
+            contentAlignment = Alignment.TopCenter,
+            modifier = Modifier.fillMaxSize(),
         ) {
-            Text(
-                text = "Toy Wall",
-                color = accentColor,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Black,
-                textAlign = TextAlign.Center,
-            )
-            Text(
-                text = if (pinnedToyIds.isEmpty()) "Pin favorites to lead the scroll" else "Pinned lead the scroll",
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
-                fontSize = 8.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-            )
-
-            if (pinnedToyIds.isNotEmpty()) {
-                FidgetWallSectionTitle("Pinned", accentColor)
-                pinnedToyIds.mapNotNull { toyId ->
-                    FIDGET_TOY_INFOS.firstOrNull { it.id == toyId }
-                }.forEach { toy ->
-                    FidgetWallToyRow(
-                        toy = toy,
-                        pinned = true,
-                        enabled = true,
-                        accentColor = accentColor,
-                        accentColorArgb = accentColorArgb,
-                        onToySelected = onToySelected,
-                        onPinToggle = onPinToggle,
-                    )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier
+                    .width(wallWidth)
+                    .fillMaxHeight()
+                    .verticalScroll(scrollState)
+                    .padding(start = 4.dp, top = 3.dp, end = 8.dp, bottom = 42.dp),
+            ) {
+                if (pinnedToyIds.isNotEmpty()) {
+                    FidgetWallSectionTitle("Pinned", accentColor)
+                    pinnedToyIds.mapNotNull { toyId ->
+                        FIDGET_TOY_INFOS.firstOrNull { it.id == toyId }
+                    }.forEach { toy ->
+                        FidgetWallToyRow(
+                            toy = toy,
+                            pinned = true,
+                            enabled = true,
+                            accentColor = accentColor,
+                            accentColorArgb = accentColorArgb,
+                            onToySelected = onToySelected,
+                            onPinToggle = onPinToggle,
+                        )
+                    }
                 }
-            }
 
-            builtByStyle.forEach { (style, toys) ->
-                FidgetWallSectionTitle(style, accentColor)
-                toys.forEach { toy ->
-                    FidgetWallToyRow(
-                        toy = toy,
-                        pinned = toy.id in pinnedSet,
-                        enabled = true,
-                        accentColor = accentColor,
-                        accentColorArgb = accentColorArgb,
-                        onToySelected = onToySelected,
-                        onPinToggle = onPinToggle,
-                    )
+                builtByStyle.forEach { (style, toys) ->
+                    FidgetWallSectionTitle(style, accentColor)
+                    toys.forEach { toy ->
+                        FidgetWallToyRow(
+                            toy = toy,
+                            pinned = toy.id in pinnedSet,
+                            enabled = true,
+                            accentColor = accentColor,
+                            accentColorArgb = accentColorArgb,
+                            onToySelected = onToySelected,
+                            onPinToggle = onPinToggle,
+                        )
+                    }
                 }
             }
         }
@@ -4075,8 +4177,8 @@ private fun FidgetPlaylistNavButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(18.dp)
-    val borderColor = accentColor.copy(alpha = 0.86f)
+    val shape = RoundedCornerShape(14.dp)
+    val borderColor = accentColor.copy(alpha = 0.62f)
     val chevronColor = readableTextColorFor(accentColorArgb)
 
     Box(
@@ -4084,16 +4186,7 @@ private fun FidgetPlaylistNavButton(
             .width(width)
             .height(height)
             .clip(shape)
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        accentColor.copy(alpha = 0.58f),
-                        accentColor.copy(alpha = 0.24f),
-                        Color.Black.copy(alpha = 0.34f),
-                    ),
-                ),
-                shape = shape,
-            )
+            .background(Color.Black.copy(alpha = 0.24f), shape)
             .border(
                 width = 1.dp,
                 color = borderColor,
@@ -4103,9 +4196,9 @@ private fun FidgetPlaylistNavButton(
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = if (isNext) ">" else "<",
+            text = if (isNext) "›" else "‹",
             fontSize = fontSize,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Light,
             color = chevronColor,
             textAlign = TextAlign.Center,
         )
@@ -4136,30 +4229,48 @@ private fun FidgetNavButton(
         return
     }
 
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(12.dp)
     Box(
         modifier = Modifier
-            .width(58.dp)
-            .height(25.dp)
+            .width(54.dp)
+            .height(28.dp)
             .clip(shape)
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        accentColor.copy(alpha = 0.96f),
-                        accentColor.copy(alpha = 0.78f),
-                    ),
-                ),
-                shape = shape,
-            )
-            .border(2.dp, accentColor, shape)
+            .background(accentColor.copy(alpha = 0.14f), shape)
+            .border(1.dp, accentColor.copy(alpha = 0.62f), shape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
             color = readableTextColorFor(accentColorArgb),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Black,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun FidgetRewardChip(
+    text: String,
+    ringColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .height(20.dp)
+            .clip(RoundedCornerShape(50))
+            .background(ringColor.copy(alpha = 0.10f))
+            .border(1.dp, ringColor.copy(alpha = 0.34f), RoundedCornerShape(50))
+            .padding(horizontal = 10.dp),
+    ) {
+        Text(
+            text = text,
+            color = ringColor.copy(alpha = 0.94f),
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
             maxLines = 1,
         )

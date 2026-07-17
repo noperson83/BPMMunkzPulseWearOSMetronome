@@ -438,6 +438,7 @@ class MainActivity : ComponentActivity() {
                 "phoneplaylist" -> PhonePlaylistApp()
                 "phonepro" -> PhoneProApp()
                 "phonebeatmachine" -> PhoneBeatMachineApp()
+                "fidgetphone" -> PhoneFidgetToyApp()
                 else -> {
                     WearApp(
                         openSpectrumRequest = openSpectrumRequest,

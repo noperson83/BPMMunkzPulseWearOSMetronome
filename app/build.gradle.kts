@@ -138,7 +138,7 @@ android {
             versionCode = 1
             versionName = "1.0"
             versionNameSuffix = "-fidgetphone"
-            buildConfigField("String", "APP_EDITION", "\"fidgettoy\"")
+            buildConfigField("String", "APP_EDITION", "\"fidgetphone\"")
         }
     }
 
